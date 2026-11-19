@@ -11,9 +11,14 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: secretpassword
     ports:
-      - "5432:5432"
+      - "5432:5432" # Only for local development 
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - app-network
 
@@ -21,15 +26,18 @@ services:
   backend:
     build: ./backend
     container_name: spring_backend
-    restart: always
+    restart: unless-stopped 
     environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/project_management
-      - SPRING_DATASOURCE_USERNAME=postgres
-      - SPRING_DATASOURCE_PASSWORD=secretpassword
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
     ports:
-      - "9090:8080"
+      - "8080:8080"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+
     networks:
       - app-network
 
@@ -37,7 +45,7 @@ services:
   frontend:
     build: ./frontend
     container_name: react_frontend
-    restart: always
+    restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
@@ -45,11 +53,11 @@ services:
     networks:
       - app-network
 
-# Volums per guardar les dades de PostgreSQL permanentment
+# Volumes to store PostgreSQL data permanently
 volumes:
   postgres_data:
 
-# Xarxa interna perquè els contenidors es comuniquin entre ells
+# Internal network for inter-container communication
 networks:
   app-network:
     driver: bridge
