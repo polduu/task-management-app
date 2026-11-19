@@ -1,4 +1,4 @@
-package com.polduu.dto.user;
+package com.polduu.dto.auth;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;

@@ -13,23 +13,26 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mapstruct.factory.Mappers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import com.polduu.dto.user.AuthResponseDto;
+import com.polduu.dto.auth.AuthResponseDto;
+import com.polduu.dto.auth.RefreshTokenRequestDto;
+import com.polduu.dto.auth.UserLoginRequestDto;
+import com.polduu.dto.auth.UserRegisterRequestDto;
 import com.polduu.dto.user.PublicUserResponseDto;
-import com.polduu.dto.user.RefreshTokenRequestDto;
-import com.polduu.dto.user.UserLoginRequestDto;
 import com.polduu.dto.user.UserPatchRequestDto;
-import com.polduu.dto.user.UserRegisterRequestDto;
 import com.polduu.dto.user.UserResponseDto;
 import com.polduu.exception.ConflictException;
 import com.polduu.exception.InvalidCredentialsException;
 import com.polduu.exception.InvalidRefreshTokenException;
 import com.polduu.exception.ResourceNotFoundException;
+import com.polduu.mapper.UserMapper;
 import com.polduu.model.AuthProvider;
 import com.polduu.model.RefreshToken;
 import com.polduu.model.User;
@@ -44,6 +47,8 @@ class UserServiceTest {
     @Mock PasswordEncoder passwordEncoder;
     @Mock JwtService jwtService;
     @Mock RefreshTokenService refreshTokenService;
+    @Spy
+    private UserMapper userMapper = Mappers.getMapper(UserMapper.class);
 
     @InjectMocks UserService userService;
 

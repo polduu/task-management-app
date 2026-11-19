@@ -6,11 +6,18 @@ import java.util.UUID;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import com.polduu.dto.auth.AuthResponseDto;
+import com.polduu.dto.auth.GitHubAuthRequestDto;
+import com.polduu.dto.auth.GoogleAuthRequestDto;
+import com.polduu.dto.auth.RefreshTokenRequestDto;
+import com.polduu.dto.auth.UserLoginRequestDto;
+import com.polduu.dto.auth.UserRegisterRequestDto;
 import com.polduu.dto.user.*;
 import com.polduu.exception.ConflictException;
 import com.polduu.exception.InvalidCredentialsException;
 import com.polduu.exception.InvalidRefreshTokenException;
 import com.polduu.exception.ResourceNotFoundException;
+import com.polduu.mapper.UserMapper;
 import com.polduu.model.AuthProvider;
 import com.polduu.model.RefreshToken;
 import com.polduu.model.User;
@@ -28,15 +35,17 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
+    private final UserMapper userMapper;
 
     
     public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService
-            , RefreshTokenService refreshTokenService
+            , RefreshTokenService refreshTokenService, UserMapper userMapper
     ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
+        this.userMapper = userMapper;
     }
 
     public AuthResponseDto createUser(UserRegisterRequestDto user) {
@@ -47,7 +56,7 @@ public class UserService {
         if (userRepository.existsByUsername(user.username())) {
             throw new ConflictException("Username already exists");
         }
-        User newUser = toUserModel(user);
+        User newUser = userMapper.toEntity(user, passwordEncoder.encode(user.password()), AuthProvider.LOCAL);
         User savedUser = userRepository.save(newUser);
         String token = jwtService.generateToken(savedUser.getId());
         RefreshToken refreshToken = refreshTokenService.renewRefreshToken(savedUser);
@@ -68,17 +77,7 @@ public class UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         
-        return toUserResponseDto(user);
-    }
-
-    private User toUserModel(UserRegisterRequestDto request) {
-        return User.builder()
-                .username(request.username())
-                .email(request.email())
-                .passwordHash(passwordEncoder.encode(request.password()))
-                .fullName(request.name())
-                .authProvider(AuthProvider.LOCAL)
-                .build();
+        return userMapper.toResponse(user);
     }
 
     public AuthResponseDto logInUser(UserLoginRequestDto request) {
@@ -98,7 +97,7 @@ public class UserService {
     @Transactional (readOnly = true)
     public List<UserResponseDto> getAllUsers() {
         return userRepository.findAll().stream()
-                .map(user -> toUserResponseDto(user)
+                .map(user -> userMapper.toResponse(user)
                 )
                 .toList();
     }
@@ -120,7 +119,7 @@ public class UserService {
 
         User updatedUser = userRepository.save(user);
 
-        return toUserResponseDto(updatedUser);
+        return userMapper.toResponse(updatedUser);
     }
 
     @Transactional(noRollbackFor = InvalidRefreshTokenException.class)
@@ -138,23 +137,13 @@ public class UserService {
         return toAuthResponseDto(user, accessToken, rotated.getToken());
     }
 
-    private UserResponseDto toUserResponseDto(User user) {
-        return new UserResponseDto(
-            user.getId(),
-            user.getUsername(),
-            user.getEmail(),
-            user.getFullName(),
-            user.getImageUrl()
-        );
-    }
-
     private AuthResponseDto toAuthResponseDto(User user, String token, String refreshToken) {
         Long expiresIn = jwtService.getJwtExpirationTime(); // Get expiration time in seconds
         return new AuthResponseDto(
             token,
             refreshToken,
             expiresIn,
-            toUserResponseDto(user)
+            userMapper.toResponse(user)
         );
     }
 
