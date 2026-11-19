@@ -32,3 +32,22 @@ project-management-app/
 ├── compose.yml       # Multi-container orchestration
 └── .github/          # CI/CD workflows
 ```
+
+## Backend development
+
+Run backend tests from the `backend` directory:
+
+```bash
+./mvnw clean test
+```
+
+When using VS Code, disable the Java extension's automatic build before running
+Maven. Otherwise, its Eclipse compiler can overwrite Maven's generated
+MapStruct classes in `backend/target`, causing `UserMapper` compilation or
+Spring bean errors.
+
+In `.vscode/settings.json`:
+
+{
+  "java.autobuild.enabled": false
+}

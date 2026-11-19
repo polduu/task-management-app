@@ -19,7 +19,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.polduu.dto.user.AuthResponseDto;
+import com.polduu.dto.auth.AuthResponseDto;
 import com.polduu.dto.user.UserResponseDto;
 import com.polduu.exception.ConflictException;
 import com.polduu.exception.GlobalExceptionHandler;
@@ -130,7 +130,7 @@ class AuthControllerTest {
                 mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                        {"username":"pol","email":"pol@test.com","password":"secret123", "name":"Pol"}
+                        {"username":"pol","email":"pol@test.com","password":"secret123", "fullName":"Pol"}
                         """))
                         .andExpect(status().isCreated())
                         .andExpect(jsonPath("$.accessToken").value("access"))
@@ -154,7 +154,7 @@ class AuthControllerTest {
                 mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                        {"username":"pol","email":"pol@test.com","password":"secret123", "name":"Pol"}
+                        {"username":"pol","email":"pol@test.com","password":"secret123", "fullName":"Pol"}
                         """))
                         .andExpect(status().isConflict())
                         .andExpect(jsonPath("$.message").value("Email already exists"));
@@ -165,7 +165,7 @@ class AuthControllerTest {
                 mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"username":"pol","email":"not-an-email","password":"secret123","name":"Pol"}
+                                {"username":"pol","email":"not-an-email","password":"secret123","fullName":"Pol"}
                                 """))
                         .andExpect(status().isBadRequest())
                         .andExpect(jsonPath("$.fieldErrors.email").exists());
@@ -176,7 +176,7 @@ class AuthControllerTest {
                 mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"username":"pol","email":"pol@test.com","password":"123","name":"Pol"}
+                                {"username":"pol","email":"pol@test.com","password":"123","fullName":"Pol"}
                                 """))
                         .andExpect(status().isBadRequest())
                         .andExpect(jsonPath("$.fieldErrors.password").exists());

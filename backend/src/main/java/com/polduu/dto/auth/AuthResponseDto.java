@@ -1,6 +1,6 @@
-package com.polduu.dto.user;
+package com.polduu.dto.auth;
 
-
+import com.polduu.dto.user.UserResponseDto;
 
 public record AuthResponseDto(
     String accessToken,

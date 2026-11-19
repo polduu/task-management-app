@@ -8,7 +8,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.polduu.dto.user.*;
+import com.polduu.dto.auth.AuthResponseDto;
+import com.polduu.dto.auth.GitHubAuthRequestDto;
+import com.polduu.dto.auth.GoogleAuthRequestDto;
+import com.polduu.dto.auth.RefreshTokenRequestDto;
+import com.polduu.dto.auth.UserLoginRequestDto;
+import com.polduu.dto.auth.UserRegisterRequestDto;
 import com.polduu.service.UserService;
 
 import io.swagger.v3.oas.annotations.tags.Tag;

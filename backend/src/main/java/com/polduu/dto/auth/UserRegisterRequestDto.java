@@ -1,4 +1,4 @@
-package com.polduu.dto.user;
+package com.polduu.dto.auth;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -14,5 +14,5 @@ public record UserRegisterRequestDto(
     @Size(min = 6, max = 100, message = "Password must be at least 6 characters long")
     String password,
     @NotBlank
-    String name
+    String fullName
 ) {}
