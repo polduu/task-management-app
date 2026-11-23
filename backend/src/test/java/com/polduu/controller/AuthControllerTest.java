@@ -12,13 +12,12 @@ import io.jsonwebtoken.JwtException;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.polduu.dto.auth.AuthResponseDto;
 import com.polduu.dto.user.UserResponseDto;
 import com.polduu.exception.ConflictException;
@@ -34,10 +33,9 @@ import com.polduu.service.UserService;
 class AuthControllerTest {
 
         @Autowired MockMvc mockMvc;
-        @Autowired ObjectMapper objectMapper;
 
-        @MockBean UserService userService;
-        @MockBean JwtService jwtService; // lo necesita JwtAuthenticationFilter
+        @MockitoBean UserService userService;
+        @MockitoBean JwtService jwtService; // lo necesita JwtAuthenticationFilter
 
         private static final String EMAIL = "pol@test.com";
         private static final String USERNAME = "pol";
