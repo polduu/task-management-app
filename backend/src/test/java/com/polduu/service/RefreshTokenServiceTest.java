@@ -188,7 +188,7 @@ class RefreshTokenServiceTest {
     }
 
     /*----------------------------------------------------------------------------- */
-    // endSession, purgeStaleTokens
+    // endSession, endAllSessions, purgeStaleTokens
 
     @Test
     void endSession_revokesOnlyTheTokensSession() {
@@ -207,6 +207,13 @@ class RefreshTokenServiceTest {
         service.endSession(RAW_TOKEN);
 
         verify(refreshTokenRepository, never()).revokeFamily(any(), any());
+    }
+
+    @Test
+    void endAllSessions_revokesEverySessionOfTheUser() {
+        service.endAllSessions(user.getId());
+
+        verify(refreshTokenRepository).revokeAllForUser(user.getId(), NOW);
     }
 
     @Test

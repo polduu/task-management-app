@@ -1,7 +1,9 @@
 package com.polduu.controller;
 
+import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -69,6 +71,14 @@ public class AuthController {
     public void logoutUser(@Valid @RequestBody RefreshTokenRequestDto refreshTokenRequest) {
         log.info("Logout endpoint hit");
         userService.logoutUser(refreshTokenRequest);
+    }
+
+    // Requires an access token: it is not in the public routes of SecurityConfig
+    @PostMapping ("/logout-all")
+    @ResponseStatus (code = HttpStatus.NO_CONTENT)
+    public void logoutAllSessions(@AuthenticationPrincipal UUID userId) {
+        log.info("Logout-all endpoint hit");
+        userService.logoutAllSessions(userId);
     }
 
 }

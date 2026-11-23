@@ -108,6 +108,11 @@ public class RefreshTokenService {
                 .ifPresent(token -> refreshTokenRepository.revokeFamily(token.getFamilyId(), clock.instant()));
     }
 
+    @Transactional
+    public void endAllSessions(UUID userId) {
+        refreshTokenRepository.revokeAllForUser(userId, clock.instant());
+    }
+
     @Scheduled(cron = "${jwt.refresh-cleanup-cron:0 0 3 * * *}")
     @Transactional
     public void purgeStaleTokens() {

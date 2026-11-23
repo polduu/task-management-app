@@ -239,13 +239,20 @@ class UserServiceTest {
     }
 
     /*----------------------------------------------------------------------------- */
-    // Tests for logoutUser
+    // Tests for logoutUser and logoutAllSessions
 
     @Test
     void logoutUser_endsTheSessionOfTheGivenToken() {
         userService.logoutUser(new RefreshTokenRequestDto("refresh"));
 
         verify(refreshTokenService).endSession("refresh");
+    }
+
+    @Test
+    void logoutAllSessions_endsEverySessionOfTheUser() {
+        userService.logoutAllSessions(userId);
+
+        verify(refreshTokenService).endAllSessions(userId);
     }
 
     /*----------------------------------------------------------------------------- */

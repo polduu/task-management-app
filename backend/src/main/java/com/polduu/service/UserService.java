@@ -165,6 +165,11 @@ public class UserService {
         refreshTokenService.endSession(request.refreshToken());
     }
 
+    // Access tokens already issued stay valid until they expire (15 min)
+    public void logoutAllSessions(UUID userId) {
+        refreshTokenService.endAllSessions(userId);
+    }
+
 
 
     

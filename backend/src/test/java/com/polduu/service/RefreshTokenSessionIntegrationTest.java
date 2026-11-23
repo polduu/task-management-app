@@ -119,6 +119,17 @@ class RefreshTokenSessionIntegrationTest {
         }
     }
 
+    @Test
+    void logoutAllSessions_closesEverySession() {
+        AuthResponseDto registered = register();
+        String other = login().refreshToken();
+
+        userService.logoutAllSessions(registered.user().id());
+
+        assertRejected(registered.refreshToken());
+        assertRejected(other);
+    }
+
     // Both requests read the token before either commits; the row lock lets only one win
     @Test
     void concurrentRefreshes_withTheSameToken_onlyOneWins_andTheSessionSurvives() throws Exception {
