@@ -3,7 +3,10 @@ package com.polduu.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,6 +22,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.polduu.dto.auth.AuthResponseDto;
@@ -160,7 +164,37 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.logInUser(new UserLoginRequestDto("ghost@test.com", PASSWORD)))
                 .isInstanceOf(InvalidCredentialsException.class);
 
-        verify(passwordEncoder, never()).matches(any(), any());
+        verify(jwtService, never()).generateToken(any());
+        verify(refreshTokenService, never()).renewRefreshToken(any());
+    }
+
+    // Timing: an unknown email must cost the same password check as a wrong password
+    @Test
+    void logInUser_withUnknownEmail_stillChecksPasswordAgainstARealHash() {
+        PasswordEncoder realEncoder = spy(new BCryptPasswordEncoder(4));
+        UserService service = new UserService(userRepository, realEncoder, jwtService, refreshTokenService, userMapper);
+        when(userRepository.findByEmail("ghost@test.com")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.logInUser(new UserLoginRequestDto("ghost@test.com", PASSWORD)))
+                .isInstanceOf(InvalidCredentialsException.class);
+
+        verify(realEncoder).matches(eq(PASSWORD), startsWith("$2a$"));
+    }
+
+    // Accounts without a password (future OAuth users) must not be able to log in with one
+    @Test
+    void logInUser_withUserWithoutPassword_failsAfterCheckingAgainstARealHash() {
+        PasswordEncoder realEncoder = spy(new BCryptPasswordEncoder(4));
+        UserService service = new UserService(userRepository, realEncoder, jwtService, refreshTokenService, userMapper);
+        User oauthUser = buildUser();
+        oauthUser.setPasswordHash(null);
+        oauthUser.setAuthProvider(AuthProvider.GOOGLE);
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(oauthUser));
+
+        assertThatThrownBy(() -> service.logInUser(new UserLoginRequestDto(EMAIL, PASSWORD)))
+                .isInstanceOf(InvalidCredentialsException.class);
+
+        verify(realEncoder).matches(eq(PASSWORD), startsWith("$2a$"));
         verify(refreshTokenService, never()).renewRefreshToken(any());
     }
 

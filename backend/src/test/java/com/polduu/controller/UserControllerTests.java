@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -33,6 +34,8 @@ import com.polduu.exception.ResourceNotFoundException;
 import com.polduu.security.JwtService;
 import com.polduu.security.SecurityConfig;
 import com.polduu.service.UserService;
+
+import io.jsonwebtoken.JwtException;
 
 @WebMvcTest(UserController.class)
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
@@ -92,9 +95,30 @@ class UserControllerTest {
     }
 
     @Test
-    void getUserProfile_withoutToken_returns401() throws Exception {
-        mockMvc.perform(get("/api/users/{id}", UUID.randomUUID()))
-                .andExpect(status().isUnauthorized());
+    void getUserProfile_withoutToken_returns401WithErrorBody() throws Exception {
+        UUID id = UUID.randomUUID();
+
+        mockMvc.perform(get("/api/users/{id}", id))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.error").value("Unauthorized"))
+                .andExpect(jsonPath("$.message").value("Authentication required"))
+                .andExpect(jsonPath("$.path").value("/api/users/" + id))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.fieldErrors").doesNotExist());
+    }
+
+    @Test
+    void getCurrentUserProfile_withInvalidToken_returns401WithErrorBody() throws Exception {
+        when(jwtService.extractUserId(any())).thenThrow(new JwtException("bad signature"));
+
+        mockMvc.perform(get("/api/users/me")
+                .header("Authorization", "Bearer invalid.token"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("Authentication required"));
+
+        verify(userService, never()).getUserById(any());
     }
 
     /*------------------------------------------------------------------------------------------------- */
