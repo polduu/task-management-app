@@ -18,27 +18,28 @@ class JwtServiceTest {
     void generateToken_canBeReadBack() {
         JwtService jwtService = new JwtService(SECRET, EXPIRATION_MS);
         UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
 
-        String token = jwtService.generateToken(userId);
+        String token = jwtService.generateToken(userId, sessionId);
 
-        assertThat(jwtService.extractUserId(token)).isEqualTo(userId);
+        assertThat(jwtService.parseAccessToken(token)).isEqualTo(new JwtService.AccessToken(userId, sessionId));
     }
 
     @Test
-    void extractUserId_withTokenSignedByAnotherKey_throws() {
+    void parseAccessToken_withTokenSignedByAnotherKey_throws() {
         String foreignToken = new JwtService("another-secret-key-that-is-at-least-32-bytes", EXPIRATION_MS)
-                .generateToken(UUID.randomUUID());
+                .generateToken(UUID.randomUUID(), UUID.randomUUID());
 
-        assertThatThrownBy(() -> new JwtService(SECRET, EXPIRATION_MS).extractUserId(foreignToken))
+        assertThatThrownBy(() -> new JwtService(SECRET, EXPIRATION_MS).parseAccessToken(foreignToken))
                 .isInstanceOf(JwtException.class);
     }
 
     @Test
-    void extractUserId_withExpiredToken_throws() {
+    void parseAccessToken_withExpiredToken_throws() {
         JwtService expiredService = new JwtService(SECRET, -1_000);
-        String token = expiredService.generateToken(UUID.randomUUID());
+        String token = expiredService.generateToken(UUID.randomUUID(), UUID.randomUUID());
 
-        assertThatThrownBy(() -> expiredService.extractUserId(token))
+        assertThatThrownBy(() -> expiredService.parseAccessToken(token))
                 .isInstanceOf(JwtException.class);
     }
 

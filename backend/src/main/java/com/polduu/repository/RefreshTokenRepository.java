@@ -16,6 +16,9 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
 
     Optional<RefreshToken> findByTokenHash(String tokenHash);
 
+    // Revoking a session revokes all its rows, and purged rows no longer exist: either way it is not active
+    boolean existsByFamilyIdAndRevokedAtIsNull(UUID familyId);
+
     // Atomic: when two requests use the same token at once, only one gets 1
     @Modifying(flushAutomatically = true)
     @Query("update RefreshToken t set t.usedAt = :now where t.id = :id and t.usedAt is null")

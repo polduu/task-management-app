@@ -55,6 +55,7 @@ class UserServiceTest {
     @InjectMocks UserService userService;
 
     private final UUID userId = UUID.randomUUID();
+    private final UUID sessionId = UUID.randomUUID();
     private static final String EMAIL = "pol@test.com";
     private static final String USERNAME = "pol";
     private static final String FULLNAME = "Pol";
@@ -75,9 +76,9 @@ class UserServiceTest {
             u.setId(userId);
             return u;
         });
-        when(jwtService.generateToken(userId)).thenReturn("access");
         when(refreshTokenService.startSession(any(User.class)))
-                .thenReturn("refresh");
+                .thenReturn(new RefreshTokenService.Session(sessionId, "refresh"));
+        when(jwtService.generateToken(userId, sessionId)).thenReturn("access");
 
         AuthResponseDto response = userService.createUser(request);
 
@@ -132,7 +133,7 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.createUser(request))
                 .isInstanceOf(ConflictException.class);
 
-        verify(jwtService, never()).generateToken(any());
+        verify(jwtService, never()).generateToken(any(), any());
         verify(refreshTokenService, never()).startSession(any());
     }
 
@@ -144,8 +145,9 @@ class UserServiceTest {
         User user = buildUser();
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(PASSWORD, HASH)).thenReturn(true);
-        when(jwtService.generateToken(userId)).thenReturn("access");
-        when(refreshTokenService.startSession(user)).thenReturn("refresh");
+        when(refreshTokenService.startSession(user))
+                .thenReturn(new RefreshTokenService.Session(sessionId, "refresh"));
+        when(jwtService.generateToken(userId, sessionId)).thenReturn("access");
 
         AuthResponseDto response = userService.logInUser(new UserLoginRequestDto(EMAIL, PASSWORD));
 
@@ -162,7 +164,7 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.logInUser(new UserLoginRequestDto("ghost@test.com", PASSWORD)))
                 .isInstanceOf(InvalidCredentialsException.class);
 
-        verify(jwtService, never()).generateToken(any());
+        verify(jwtService, never()).generateToken(any(), any());
         verify(refreshTokenService, never()).startSession(any());
     }
 
@@ -205,7 +207,7 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.logInUser(new UserLoginRequestDto(EMAIL, "wrong")))
                 .isInstanceOf(InvalidCredentialsException.class);
 
-        verify(jwtService, never()).generateToken(any());
+        verify(jwtService, never()).generateToken(any(), any());
         verify(refreshTokenService, never()).startSession(any());
     }
 
@@ -216,8 +218,8 @@ class UserServiceTest {
     void refreshToken_withValidToken_returnsNewAccessAndRotatedRefreshToken() {
         User user = buildUser();
         when(refreshTokenService.rotate("old-token"))
-                .thenReturn(new RefreshTokenService.Rotation(user, "new-token"));
-        when(jwtService.generateToken(userId)).thenReturn("new-access");
+                .thenReturn(new RefreshTokenService.Rotation(user, sessionId, "new-token"));
+        when(jwtService.generateToken(userId, sessionId)).thenReturn("new-access");
 
         AuthResponseDto response = userService.refreshToken(new RefreshTokenRequestDto("old-token"));
 
@@ -235,7 +237,7 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.refreshToken(new RefreshTokenRequestDto("rejected")))
                 .isInstanceOf(InvalidRefreshTokenException.class);
 
-        verify(jwtService, never()).generateToken(any());
+        verify(jwtService, never()).generateToken(any(), any());
     }
 
     /*----------------------------------------------------------------------------- */

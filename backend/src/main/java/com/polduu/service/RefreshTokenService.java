@@ -55,18 +55,21 @@ public class RefreshTokenService {
         this.maxSessionAge = maxSessionAge;
     }
 
-    public record Rotation(User user, String refreshToken) {}
+    public record Session(UUID id, String refreshToken) {}
+
+    public record Rotation(User user, UUID sessionId, String refreshToken) {}
 
     // New session on login or register; closes the least recently used ones beyond the limit
     @Transactional
-    public String startSession(User user) {
+    public Session startSession(User user) {
         Instant now = clock.instant();
         List<RefreshToken> active = refreshTokenRepository.findActiveSessionTokens(user.getId(), now);
         int excess = active.size() - (MAX_SESSIONS_PER_USER - 1);
         for (int i = 0; i < excess; i++) {
             refreshTokenRepository.revokeFamily(active.get(i).getFamilyId(), now);
         }
-        return issue(user, UUID.randomUUID(), now.plus(maxSessionAge), now);
+        UUID sessionId = UUID.randomUUID();
+        return new Session(sessionId, issue(user, sessionId, now.plus(maxSessionAge), now));
     }
 
     // noRollbackFor: revoking a session on reuse must be saved even though the request fails
@@ -98,7 +101,8 @@ public class RefreshTokenService {
         }
 
         User user = current.getUser();
-        return new Rotation(user, issue(user, current.getFamilyId(), current.getFamilyExpiresAt(), now));
+        return new Rotation(user, current.getFamilyId(),
+                issue(user, current.getFamilyId(), current.getFamilyExpiresAt(), now));
     }
 
     // Logout: closes only the session the token belongs to
@@ -106,6 +110,11 @@ public class RefreshTokenService {
     public void endSession(String rawToken) {
         refreshTokenRepository.findByTokenHash(hash(rawToken))
                 .ifPresent(token -> refreshTokenRepository.revokeFamily(token.getFamilyId(), clock.instant()));
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isSessionActive(UUID sessionId) {
+        return refreshTokenRepository.existsByFamilyIdAndRevokedAtIsNull(sessionId);
     }
 
     @Transactional

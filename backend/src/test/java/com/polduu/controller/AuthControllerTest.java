@@ -33,6 +33,7 @@ import com.polduu.exception.InvalidCredentialsException;
 import com.polduu.exception.InvalidRefreshTokenException;
 import com.polduu.security.JwtService;
 import com.polduu.security.SecurityConfig;
+import com.polduu.service.RefreshTokenService;
 import com.polduu.service.UserService;
 
 @WebMvcTest(AuthController.class)
@@ -43,6 +44,7 @@ class AuthControllerTest {
 
         @MockitoBean UserService userService;
         @MockitoBean JwtService jwtService; // lo necesita JwtAuthenticationFilter
+        @MockitoBean RefreshTokenService refreshTokenService; // idem
 
         private static final String EMAIL = "pol@test.com";
         private static final String USERNAME = "pol";
@@ -93,7 +95,7 @@ class AuthControllerTest {
 
         @Test
         void login_withExpiredBearerToken_stillWorks() throws Exception {
-                when(jwtService.extractUserId(any())).thenThrow(new JwtException("expired"));
+                when(jwtService.parseAccessToken(any())).thenThrow(new JwtException("expired"));
                 when(userService.logInUser(any())).thenReturn(new AuthResponseDto(ACCESS_TOKEN, REFRESH_TOKEN, 900L,
                 new UserResponseDto(UUID.randomUUID(), USERNAME, EMAIL, FULLNAME, null)));
 

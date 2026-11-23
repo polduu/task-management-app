@@ -33,6 +33,7 @@ import com.polduu.exception.GlobalExceptionHandler;
 import com.polduu.exception.ResourceNotFoundException;
 import com.polduu.security.JwtService;
 import com.polduu.security.SecurityConfig;
+import com.polduu.service.RefreshTokenService;
 import com.polduu.service.UserService;
 
 import io.jsonwebtoken.JwtException;
@@ -44,6 +45,7 @@ class UserControllerTest {
     @Autowired MockMvc mockMvc;
 
     @MockitoBean JwtService jwtService;
+    @MockitoBean RefreshTokenService refreshTokenService; // lo necesita JwtAuthenticationFilter
     @MockitoBean UserService userService;
 
     private static final String EMAIL = "pol@test.com";
@@ -111,7 +113,7 @@ class UserControllerTest {
 
     @Test
     void getCurrentUserProfile_withInvalidToken_returns401WithErrorBody() throws Exception {
-        when(jwtService.extractUserId(any())).thenThrow(new JwtException("bad signature"));
+        when(jwtService.parseAccessToken(any())).thenThrow(new JwtException("bad signature"));
 
         mockMvc.perform(get("/api/users/me")
                 .header("Authorization", "Bearer invalid.token"))

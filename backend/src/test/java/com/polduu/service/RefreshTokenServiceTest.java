@@ -57,10 +57,12 @@ class RefreshTokenServiceTest {
 
     @Test
     void startSession_storesOnlyTheHashAndSetsBothExpiries() {
-        String raw = service.startSession(user);
+        RefreshTokenService.Session session = service.startSession(user);
+        String raw = session.refreshToken();
 
         RefreshToken saved = captureSaved();
         assertThat(raw).matches("[A-Za-z0-9_-]{43}");
+        assertThat(saved.getFamilyId()).isEqualTo(session.id());
         assertThat(saved.getTokenHash()).isEqualTo(RefreshTokenService.hash(raw)).isNotEqualTo(raw);
         assertThat(saved.getUser()).isEqualTo(user);
         assertThat(saved.getFamilyId()).isNotNull();
@@ -72,7 +74,8 @@ class RefreshTokenServiceTest {
 
     @Test
     void startSession_issuesADifferentTokenEachTime() {
-        assertThat(service.startSession(user)).isNotEqualTo(service.startSession(user));
+        assertThat(service.startSession(user).refreshToken())
+                .isNotEqualTo(service.startSession(user).refreshToken());
     }
 
     @Test
@@ -108,6 +111,7 @@ class RefreshTokenServiceTest {
 
         RefreshToken saved = captureSaved();
         assertThat(rotation.user()).isEqualTo(user);
+        assertThat(rotation.sessionId()).isEqualTo(current.getFamilyId());
         assertThat(rotation.refreshToken()).isNotEqualTo(RAW_TOKEN);
         assertThat(saved.getTokenHash()).isEqualTo(RefreshTokenService.hash(rotation.refreshToken()));
         assertThat(saved.getFamilyId()).isEqualTo(current.getFamilyId());
@@ -188,7 +192,16 @@ class RefreshTokenServiceTest {
     }
 
     /*----------------------------------------------------------------------------- */
-    // endSession, endAllSessions, purgeStaleTokens
+    // endSession, isSessionActive, endAllSessions, purgeStaleTokens
+
+    @Test
+    void isSessionActive_asksWhetherTheSessionHasUnrevokedTokens() {
+        UUID sessionId = UUID.randomUUID();
+        when(refreshTokenRepository.existsByFamilyIdAndRevokedAtIsNull(sessionId)).thenReturn(true);
+
+        assertThat(service.isSessionActive(sessionId)).isTrue();
+        assertThat(service.isSessionActive(UUID.randomUUID())).isFalse();
+    }
 
     @Test
     void endSession_revokesOnlyTheTokensSession() {

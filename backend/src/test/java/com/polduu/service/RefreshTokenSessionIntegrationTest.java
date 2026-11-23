@@ -28,6 +28,7 @@ import com.polduu.dto.auth.UserRegisterRequestDto;
 import com.polduu.exception.InvalidRefreshTokenException;
 import com.polduu.repository.RefreshTokenRepository;
 import com.polduu.repository.UserRepository;
+import com.polduu.security.JwtService;
 
 /**
  * Refresh token sessions against a real Postgres: real transactions, row locks and commits.
@@ -41,6 +42,7 @@ class RefreshTokenSessionIntegrationTest {
     private static final String PASSWORD = "secret123";
 
     @Autowired UserService userService;
+    @Autowired JwtService jwtService;
     @Autowired RefreshTokenService refreshTokenService;
     @Autowired RefreshTokenRepository refreshTokenRepository;
     @Autowired UserRepository userRepository;
@@ -96,13 +98,15 @@ class RefreshTokenSessionIntegrationTest {
 
     @Test
     void login_createsIndependentSessions_andLogoutClosesOnlyItsOwn() {
-        String laptop = register().refreshToken();
-        String phone = login().refreshToken();
+        AuthResponseDto laptop = register();
+        AuthResponseDto phone = login();
 
-        userService.logoutUser(new RefreshTokenRequestDto(laptop));
+        userService.logoutUser(new RefreshTokenRequestDto(laptop.refreshToken()));
 
-        assertRejected(laptop);
-        assertThat(refresh(phone).refreshToken()).isNotBlank();
+        assertRejected(laptop.refreshToken());
+        assertThat(isActive(laptop)).isFalse();
+        assertThat(isActive(phone)).isTrue();
+        assertThat(refresh(phone.refreshToken()).refreshToken()).isNotBlank();
     }
 
     @Test
@@ -119,6 +123,19 @@ class RefreshTokenSessionIntegrationTest {
         }
     }
 
+    // The access token of a closed session must stop working, not just its refresh token
+    @Test
+    void refresh_keepsTheAccessTokenSessionActive() {
+        AuthResponseDto registered = register();
+
+        AuthResponseDto refreshed = refresh(registered.refreshToken());
+
+        assertThat(isActive(registered)).isTrue();
+        assertThat(isActive(refreshed)).isTrue();
+        assertThat(jwtService.parseAccessToken(refreshed.accessToken()).sessionId())
+                .isEqualTo(jwtService.parseAccessToken(registered.accessToken()).sessionId());
+    }
+
     @Test
     void logoutAllSessions_closesEverySession() {
         AuthResponseDto registered = register();
@@ -128,6 +145,7 @@ class RefreshTokenSessionIntegrationTest {
 
         assertRejected(registered.refreshToken());
         assertRejected(other);
+        assertThat(isActive(registered)).isFalse();
     }
 
     // Both requests read the token before either commits; the row lock lets only one win
@@ -193,6 +211,10 @@ class RefreshTokenSessionIntegrationTest {
 
     private AuthResponseDto refresh(String refreshToken) {
         return userService.refreshToken(new RefreshTokenRequestDto(refreshToken));
+    }
+
+    private boolean isActive(AuthResponseDto auth) {
+        return refreshTokenService.isSessionActive(jwtService.parseAccessToken(auth.accessToken()).sessionId());
     }
 
     private void assertRejected(String refreshToken) {

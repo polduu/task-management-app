@@ -62,10 +62,10 @@ public class UserService {
         }
         User newUser = userMapper.toEntity(user, passwordEncoder.encode(user.password()), AuthProvider.LOCAL);
         User savedUser = userRepository.save(newUser);
-        String token = jwtService.generateToken(savedUser.getId());
-        String refreshToken = refreshTokenService.startSession(savedUser);
+        RefreshTokenService.Session session = refreshTokenService.startSession(savedUser);
+        String token = jwtService.generateToken(savedUser.getId(), session.id());
 
-        return toAuthResponseDto(savedUser, token, refreshToken);
+        return toAuthResponseDto(savedUser, token, session.refreshToken());
     }
 
     public AuthResponseDto googleLogin(GoogleAuthRequestDto googleAuthRequest) {
@@ -97,10 +97,10 @@ public class UserService {
         }
 
         User user = found.get();
-        String token = jwtService.generateToken(user.getId());
-        String refreshToken = refreshTokenService.startSession(user);
+        RefreshTokenService.Session session = refreshTokenService.startSession(user);
+        String token = jwtService.generateToken(user.getId(), session.id());
 
-        return toAuthResponseDto(user, token, refreshToken);
+        return toAuthResponseDto(user, token, session.refreshToken());
     }  
     @Transactional (readOnly = true)
     public List<UserResponseDto> getAllUsers() {
@@ -136,7 +136,7 @@ public class UserService {
         RefreshTokenService.Rotation rotation = refreshTokenService.rotate(refreshTokenRequest.refreshToken());
 
         User user = rotation.user();
-        String accessToken = jwtService.generateToken(user.getId());
+        String accessToken = jwtService.generateToken(user.getId(), rotation.sessionId());
 
         return toAuthResponseDto(user, accessToken, rotation.refreshToken());
     }
@@ -165,7 +165,7 @@ public class UserService {
         refreshTokenService.endSession(request.refreshToken());
     }
 
-    // Access tokens already issued stay valid until they expire (15 min)
+    // Access tokens die with their session: the filter rejects them once it is revoked
     public void logoutAllSessions(UUID userId) {
         refreshTokenService.endAllSessions(userId);
     }
