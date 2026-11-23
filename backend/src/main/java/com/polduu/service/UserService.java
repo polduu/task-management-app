@@ -20,7 +20,6 @@ import com.polduu.exception.InvalidRefreshTokenException;
 import com.polduu.exception.ResourceNotFoundException;
 import com.polduu.mapper.UserMapper;
 import com.polduu.model.AuthProvider;
-import com.polduu.model.RefreshToken;
 import com.polduu.model.User;
 import com.polduu.repository.UserRepository;
 import com.polduu.security.JwtService;
@@ -64,9 +63,9 @@ public class UserService {
         User newUser = userMapper.toEntity(user, passwordEncoder.encode(user.password()), AuthProvider.LOCAL);
         User savedUser = userRepository.save(newUser);
         String token = jwtService.generateToken(savedUser.getId());
-        RefreshToken refreshToken = refreshTokenService.renewRefreshToken(savedUser);
-        
-        return toAuthResponseDto(savedUser, token, refreshToken.getToken());
+        String refreshToken = refreshTokenService.startSession(savedUser);
+
+        return toAuthResponseDto(savedUser, token, refreshToken);
     }
 
     public AuthResponseDto googleLogin(GoogleAuthRequestDto googleAuthRequest) {
@@ -99,9 +98,9 @@ public class UserService {
 
         User user = found.get();
         String token = jwtService.generateToken(user.getId());
-        RefreshToken refreshToken = refreshTokenService.renewRefreshToken(user);
-        
-        return toAuthResponseDto(user, token, refreshToken.getToken());
+        String refreshToken = refreshTokenService.startSession(user);
+
+        return toAuthResponseDto(user, token, refreshToken);
     }  
     @Transactional (readOnly = true)
     public List<UserResponseDto> getAllUsers() {
@@ -134,16 +133,12 @@ public class UserService {
     @Transactional(noRollbackFor = InvalidRefreshTokenException.class)
     public AuthResponseDto refreshToken(RefreshTokenRequestDto refreshTokenRequest) {
 
-        RefreshToken current = refreshTokenService.findByToken(refreshTokenRequest.refreshToken())
-                .orElseThrow(() -> new InvalidRefreshTokenException("Invalid refresh token"));
+        RefreshTokenService.Rotation rotation = refreshTokenService.rotate(refreshTokenRequest.refreshToken());
 
-        refreshTokenService.verifyExpiration(current);
-
-        User user = current.getUser();
+        User user = rotation.user();
         String accessToken = jwtService.generateToken(user.getId());
-        RefreshToken rotated = refreshTokenService.renewRefreshToken(user);
 
-        return toAuthResponseDto(user, accessToken, rotated.getToken());
+        return toAuthResponseDto(user, accessToken, rotation.refreshToken());
     }
 
     private AuthResponseDto toAuthResponseDto(User user, String token, String refreshToken) {
@@ -167,7 +162,7 @@ public class UserService {
     }
 
     public void logoutUser(RefreshTokenRequestDto request) {
-        refreshTokenService.deleteByToken(request.refreshToken());
+        refreshTokenService.endSession(request.refreshToken());
     }
 
 
