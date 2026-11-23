@@ -4,7 +4,6 @@ import com.polduu.exception.InvalidRefreshTokenException;
 import com.polduu.model.RefreshToken;
 import com.polduu.model.User;
 import com.polduu.repository.RefreshTokenRepository;
-import com.polduu.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,7 +21,7 @@ public class RefreshTokenService {
 
     private final RefreshTokenRepository refreshTokenRepository;
 
-    public RefreshTokenService(RefreshTokenRepository refreshTokenRepository, UserRepository userRepository) {
+    public RefreshTokenService(RefreshTokenRepository refreshTokenRepository) {
         this.refreshTokenRepository = refreshTokenRepository;
     }
 
