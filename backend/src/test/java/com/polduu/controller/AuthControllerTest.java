@@ -5,10 +5,12 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.List;
 import java.util.UUID;
 import io.jsonwebtoken.JwtException;
 
@@ -20,6 +22,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.polduu.dto.auth.AuthResponseDto;
@@ -30,6 +33,7 @@ import com.polduu.exception.InvalidCredentialsException;
 import com.polduu.exception.InvalidRefreshTokenException;
 import com.polduu.security.JwtService;
 import com.polduu.security.SecurityConfig;
+import com.polduu.service.RefreshTokenService;
 import com.polduu.service.UserService;
 
 @WebMvcTest(AuthController.class)
@@ -40,6 +44,7 @@ class AuthControllerTest {
 
         @MockitoBean UserService userService;
         @MockitoBean JwtService jwtService; // lo necesita JwtAuthenticationFilter
+        @MockitoBean RefreshTokenService refreshTokenService; // idem
 
         private static final String EMAIL = "pol@test.com";
         private static final String USERNAME = "pol";
@@ -90,7 +95,7 @@ class AuthControllerTest {
 
         @Test
         void login_withExpiredBearerToken_stillWorks() throws Exception {
-                when(jwtService.extractUserId(any())).thenThrow(new JwtException("expired"));
+                when(jwtService.parseAccessToken(any())).thenThrow(new JwtException("expired"));
                 when(userService.logInUser(any())).thenReturn(new AuthResponseDto(ACCESS_TOKEN, REFRESH_TOKEN, 900L,
                 new UserResponseDto(UUID.randomUUID(), USERNAME, EMAIL, FULLNAME, null)));
 
@@ -328,6 +333,29 @@ class AuthControllerTest {
                         .content("{}"))
                         .andExpect(status().isBadRequest())
                         .andExpect(jsonPath("$.fieldErrors").exists());
+        }
+
+        /*------------------------------------------------------------------------------------------------*/
+
+        // Logout-all Tests
+
+        @Test
+        void logoutAllSessions_withToken_endsEverySessionOfThatUser() throws Exception {
+                UUID userId = UUID.randomUUID();
+
+                mockMvc.perform(post("/api/auth/logout-all")
+                        .with(authentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()))))
+                        .andExpect(status().isNoContent());
+
+                verify(userService).logoutAllSessions(userId);
+        }
+
+        @Test
+        void logoutAllSessions_withoutToken_returns401() throws Exception {
+                mockMvc.perform(post("/api/auth/logout-all"))
+                        .andExpect(status().isUnauthorized());
+
+                verify(userService, never()).logoutAllSessions(any());
         }
 
 }

@@ -5,10 +5,11 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.polduu.service.RefreshTokenService;
+
 import io.jsonwebtoken.JwtException;
 import java.io.IOException;
 import java.util.Collections;
-import java.util.UUID;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -19,9 +20,11 @@ import jakarta.servlet.http.HttpServletResponse;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
+    private final RefreshTokenService refreshTokenService;
 
-    public JwtAuthenticationFilter(JwtService jwtService) {
+    public JwtAuthenticationFilter(JwtService jwtService, RefreshTokenService refreshTokenService) {
         this.jwtService = jwtService;
+        this.refreshTokenService = refreshTokenService;
     }
 
     @Override
@@ -34,9 +37,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (authHeader != null && authHeader.startsWith("Bearer ")
                 && SecurityContextHolder.getContext().getAuthentication() == null) {
             try {
-                UUID userId = jwtService.extractUserId(authHeader.substring(7));
-                SecurityContextHolder.getContext().setAuthentication(
-                        new UsernamePasswordAuthenticationToken(userId, null, Collections.emptyList()));
+                JwtService.AccessToken accessToken = jwtService.parseAccessToken(authHeader.substring(7));
+                // A logged-out session must not keep working until its access token expires
+                if (refreshTokenService.isSessionActive(accessToken.sessionId())) {
+                    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                            accessToken.userId(), null, Collections.emptyList()));
+                }
             } catch (JwtException | IllegalArgumentException e) {
                 // Token invàlid/caducat: no autentiquem; l'EntryPoint respondrà 401 si cal
                 logger.debug("Invalid JWT: " + e.getMessage());

@@ -10,7 +10,6 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -38,7 +37,6 @@ import com.polduu.exception.InvalidRefreshTokenException;
 import com.polduu.exception.ResourceNotFoundException;
 import com.polduu.mapper.UserMapper;
 import com.polduu.model.AuthProvider;
-import com.polduu.model.RefreshToken;
 import com.polduu.model.User;
 import com.polduu.repository.UserRepository;
 import com.polduu.security.JwtService;
@@ -57,6 +55,7 @@ class UserServiceTest {
     @InjectMocks UserService userService;
 
     private final UUID userId = UUID.randomUUID();
+    private final UUID sessionId = UUID.randomUUID();
     private static final String EMAIL = "pol@test.com";
     private static final String USERNAME = "pol";
     private static final String FULLNAME = "Pol";
@@ -77,9 +76,9 @@ class UserServiceTest {
             u.setId(userId);
             return u;
         });
-        when(jwtService.generateToken(userId)).thenReturn("access");
-        when(refreshTokenService.renewRefreshToken(any(User.class)))
-                .thenReturn(refreshToken(null, "refresh"));
+        when(refreshTokenService.startSession(any(User.class)))
+                .thenReturn(new RefreshTokenService.Session(sessionId, "refresh"));
+        when(jwtService.generateToken(userId, sessionId)).thenReturn("access");
 
         AuthResponseDto response = userService.createUser(request);
 
@@ -97,7 +96,7 @@ class UserServiceTest {
         assertThat(response.user().id()).isEqualTo(userId);
         assertThat(response.user().email()).isEqualTo(EMAIL);
 
-        verify(refreshTokenService).renewRefreshToken(saved);
+        verify(refreshTokenService).startSession(saved);
     }
 
     @Test
@@ -134,8 +133,8 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.createUser(request))
                 .isInstanceOf(ConflictException.class);
 
-        verify(jwtService, never()).generateToken(any());
-        verify(refreshTokenService, never()).renewRefreshToken(any());
+        verify(jwtService, never()).generateToken(any(), any());
+        verify(refreshTokenService, never()).startSession(any());
     }
 
     /*----------------------------------------------------------------------------- */
@@ -146,8 +145,9 @@ class UserServiceTest {
         User user = buildUser();
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(PASSWORD, HASH)).thenReturn(true);
-        when(jwtService.generateToken(userId)).thenReturn("access");
-        when(refreshTokenService.renewRefreshToken(user)).thenReturn(refreshToken(user, "refresh"));
+        when(refreshTokenService.startSession(user))
+                .thenReturn(new RefreshTokenService.Session(sessionId, "refresh"));
+        when(jwtService.generateToken(userId, sessionId)).thenReturn("access");
 
         AuthResponseDto response = userService.logInUser(new UserLoginRequestDto(EMAIL, PASSWORD));
 
@@ -164,8 +164,8 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.logInUser(new UserLoginRequestDto("ghost@test.com", PASSWORD)))
                 .isInstanceOf(InvalidCredentialsException.class);
 
-        verify(jwtService, never()).generateToken(any());
-        verify(refreshTokenService, never()).renewRefreshToken(any());
+        verify(jwtService, never()).generateToken(any(), any());
+        verify(refreshTokenService, never()).startSession(any());
     }
 
     // Timing: an unknown email must cost the same password check as a wrong password
@@ -195,7 +195,7 @@ class UserServiceTest {
                 .isInstanceOf(InvalidCredentialsException.class);
 
         verify(realEncoder).matches(eq(PASSWORD), startsWith("$2a$"));
-        verify(refreshTokenService, never()).renewRefreshToken(any());
+        verify(refreshTokenService, never()).startSession(any());
     }
 
     @Test
@@ -207,21 +207,19 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.logInUser(new UserLoginRequestDto(EMAIL, "wrong")))
                 .isInstanceOf(InvalidCredentialsException.class);
 
-        verify(jwtService, never()).generateToken(any());
-        verify(refreshTokenService, never()).renewRefreshToken(any());
+        verify(jwtService, never()).generateToken(any(), any());
+        verify(refreshTokenService, never()).startSession(any());
     }
 
     /*----------------------------------------------------------------------------- */
     // Tests for refreshToken
 
     @Test
-    void refreshToken_withValidToken_rotatesRefreshToken() {
+    void refreshToken_withValidToken_returnsNewAccessAndRotatedRefreshToken() {
         User user = buildUser();
-        RefreshToken oldToken = refreshToken(user, "old-token");
-        when(refreshTokenService.findByToken("old-token")).thenReturn(Optional.of(oldToken));
-        when(refreshTokenService.verifyExpiration(oldToken)).thenReturn(oldToken);
-        when(jwtService.generateToken(userId)).thenReturn("new-access");
-        when(refreshTokenService.renewRefreshToken(user)).thenReturn(refreshToken(user, "new-token"));
+        when(refreshTokenService.rotate("old-token"))
+                .thenReturn(new RefreshTokenService.Rotation(user, sessionId, "new-token"));
+        when(jwtService.generateToken(userId, sessionId)).thenReturn("new-access");
 
         AuthResponseDto response = userService.refreshToken(new RefreshTokenRequestDto("old-token"));
 
@@ -229,45 +227,34 @@ class UserServiceTest {
         assertThat(response.refreshToken()).isEqualTo("new-token");
         assertThat(response.user().id()).isEqualTo(userId);
         assertThat(response.user().email()).isEqualTo(EMAIL);
-
-        verify(refreshTokenService).renewRefreshToken(user);
-        verify(refreshTokenService).verifyExpiration(oldToken);
     }
 
     @Test
-    void refreshToken_withUnknownToken_throwsInvalidRefreshToken() {
-        when(refreshTokenService.findByToken("unknown")).thenReturn(Optional.empty());
+    void refreshToken_withRejectedToken_propagatesExceptionAndIssuesNothing() {
+        when(refreshTokenService.rotate("rejected"))
+                .thenThrow(new InvalidRefreshTokenException("Invalid refresh token"));
 
-        assertThatThrownBy(() -> userService.refreshToken(new RefreshTokenRequestDto("unknown")))
+        assertThatThrownBy(() -> userService.refreshToken(new RefreshTokenRequestDto("rejected")))
                 .isInstanceOf(InvalidRefreshTokenException.class);
 
-        verify(refreshTokenService, never()).renewRefreshToken(any());
-        verify(jwtService, never()).generateToken(any());
-    }
-
-    @Test
-    void refreshToken_withExpiredToken_propagatesExceptionAndIssuesNothing() {
-        User user = buildUser();
-        RefreshToken expired = refreshToken(user, "expired");
-        when(refreshTokenService.findByToken("expired")).thenReturn(Optional.of(expired));
-        when(refreshTokenService.verifyExpiration(expired))
-                .thenThrow(new InvalidRefreshTokenException("Refresh token has expired. Please login again."));
-
-        assertThatThrownBy(() -> userService.refreshToken(new RefreshTokenRequestDto("expired")))
-                .isInstanceOf(InvalidRefreshTokenException.class);
-
-        verify(refreshTokenService, never()).renewRefreshToken(any());
-        verify(jwtService, never()).generateToken(any());
+        verify(jwtService, never()).generateToken(any(), any());
     }
 
     /*----------------------------------------------------------------------------- */
-    // Tests for logoutUser
+    // Tests for logoutUser and logoutAllSessions
 
     @Test
-    void logoutUser_deletesTheGivenRefreshToken() {
+    void logoutUser_endsTheSessionOfTheGivenToken() {
         userService.logoutUser(new RefreshTokenRequestDto("refresh"));
 
-        verify(refreshTokenService).deleteByToken("refresh");
+        verify(refreshTokenService).endSession("refresh");
+    }
+
+    @Test
+    void logoutAllSessions_endsEverySessionOfTheUser() {
+        userService.logoutAllSessions(userId);
+
+        verify(refreshTokenService).endAllSessions(userId);
     }
 
     /*----------------------------------------------------------------------------- */
@@ -406,13 +393,5 @@ class UserServiceTest {
                 .passwordHash(HASH)
                 .authProvider(AuthProvider.LOCAL)
                 .build();
-    }
-
-    private RefreshToken refreshToken(User user, String token) {
-        RefreshToken refreshToken = new RefreshToken();
-        refreshToken.setUser(user);
-        refreshToken.setToken(token);
-        refreshToken.setExpiryDate(Instant.now().plusSeconds(3600));
-        return refreshToken;
     }
 }
