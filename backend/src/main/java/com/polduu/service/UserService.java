@@ -1,6 +1,7 @@
 package com.polduu.service;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -37,7 +38,10 @@ public class UserService {
     private final RefreshTokenService refreshTokenService;
     private final UserMapper userMapper;
 
-    
+    // Checked when the email is unknown or has no password, so every failed login costs one
+    // password hash comparison and response times don't reveal which emails are registered
+    private final String dummyPasswordHash;
+
     public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService
             , RefreshTokenService refreshTokenService, UserMapper userMapper
     ) {
@@ -46,6 +50,7 @@ public class UserService {
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
         this.userMapper = userMapper;
+        this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
     public AuthResponseDto createUser(UserRegisterRequestDto user) {
@@ -82,13 +87,17 @@ public class UserService {
 
     public AuthResponseDto logInUser(UserLoginRequestDto request) {
         
-        User user = userRepository.findByEmail(request.email())
-                .orElseThrow(() -> new InvalidCredentialsException());
+        Optional<User> found = userRepository.findByEmail(request.email());
+        String storedHash = found.map(User::getPasswordHash).orElse(null);
 
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+        // Always run the hash comparison, even when it can't succeed (see dummyPasswordHash)
+        boolean passwordMatches = passwordEncoder.matches(request.password(),
+                storedHash != null ? storedHash : dummyPasswordHash);
+        if (storedHash == null || !passwordMatches) {
             throw new InvalidCredentialsException();
         }
 
+        User user = found.get();
         String token = jwtService.generateToken(user.getId());
         RefreshToken refreshToken = refreshTokenService.renewRefreshToken(user);
         

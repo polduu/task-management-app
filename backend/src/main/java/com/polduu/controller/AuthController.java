@@ -36,19 +36,19 @@ public class AuthController {
     @PostMapping ("/register")
     @ResponseStatus (code = HttpStatus.CREATED)
     public AuthResponseDto createUser(@Valid @RequestBody UserRegisterRequestDto user) {
-        log.info("Creating new user: {}", user.email());
+        log.info("Register endpoint hit");
         return userService.createUser(user);
     }
 
     @PostMapping ("/google")
     public AuthResponseDto googleLogin(@Valid @RequestBody GoogleAuthRequestDto googleAuthRequest) {
-        log.info("Google login endpoint hit: {}");
+        log.info("Google login endpoint hit");
         return userService.googleLogin(googleAuthRequest);
     }
 
     @PostMapping ("/github")
     public AuthResponseDto githubLogin(@Valid @RequestBody GitHubAuthRequestDto githubAuthRequest) {
-        log.info("GitHub login endpoint hit: {}");
+        log.info("GitHub login endpoint hit");
         return userService.githubLogin(githubAuthRequest);
     }
 
