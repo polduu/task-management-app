@@ -1,6 +1,5 @@
 package com.polduu.controller;
 
-import java.util.List;
 import java.util.UUID;
 
 import org.springframework.http.ResponseEntity;
@@ -51,11 +50,5 @@ public class UserController {
     public ResponseEntity<UserResponseDto> getCurrentUserProfile(@AuthenticationPrincipal UUID userId) {
         log.info("Fetching current user profile");
         return ResponseEntity.ok(userService.getUserById(userId));
-    }
-
-    @GetMapping ("/all") // TODO: Admin only endpoint, add security later
-    public List<UserResponseDto> getAllUsers() {
-        log.info("Fetching all users");
-        return userService.getAllUsers();
     }
 }

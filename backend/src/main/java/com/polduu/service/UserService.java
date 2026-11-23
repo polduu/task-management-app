@@ -1,6 +1,5 @@
 package com.polduu.service;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -102,13 +101,6 @@ public class UserService {
 
         return toAuthResponseDto(user, token, session.refreshToken());
     }  
-    @Transactional (readOnly = true)
-    public List<UserResponseDto> getAllUsers() {
-        return userRepository.findAll().stream()
-                .map(user -> userMapper.toResponse(user)
-                )
-                .toList();
-    }
     public UserResponseDto updateUserById(UUID id, UserPatchRequestDto request) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));

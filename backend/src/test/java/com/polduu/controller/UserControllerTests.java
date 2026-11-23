@@ -230,22 +230,4 @@ class UserControllerTest {
                 .content("{}"))
                 .andExpect(status().isUnauthorized());
     }
-
-    /*------------------------------------------------------------------------------------------------- */
-    // Tests for GET /api/users/all
-    // NOTE: any authenticated user can list every email. Remove these tests together with
-    // the endpoint, or change them to expect 403 once roles exist.
-
-    @Test
-    void getAllUsers_returnsListOfUsers() throws Exception {
-        when(userService.getAllUsers()).thenReturn(List.of(
-                new UserResponseDto(UUID.randomUUID(), USERNAME, EMAIL, FULLNAME, null),
-                new UserResponseDto(UUID.randomUUID(), "lusix", "lucia@test.com", "Lucia", null)));
-
-        mockMvc.perform(get("/api/users/all")
-                .with(authenticatedAs(UUID.randomUUID())))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].username").value(USERNAME))
-                .andExpect(jsonPath("$[1].username").value("lusix"));
-    }
 }
