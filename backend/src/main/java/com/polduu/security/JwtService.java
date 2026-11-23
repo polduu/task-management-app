@@ -15,20 +15,23 @@ import java.util.function.Function;
 @Service
 public class JwtService {
 
-    // Secret key for signing the JWT token
-    @Value("${jwt.secret}")
-    private String secretKey;
+    // HS256 requires a key of at least 256 bits
+    static final int MIN_SECRET_BYTES = 32;
 
-    // Expiration time of the token (for example, 15 minutes in milliseconds)
-    @Value ("${jwt.expiration:900000}")
-    private long jwtExpirationMs; 
+    private final SecretKey signingKey;
+    private final long jwtExpirationMs;
 
-    private SecretKey getSigningKey() {
-        byte[] keyBytes = secretKey.getBytes(StandardCharsets.UTF_8);
-        return Keys.hmacShaKeyFor(keyBytes);
+    // Builds and validates the key at startup, so a bad secret stops the app instead of failing per request
+    public JwtService(@Value("${jwt.secret}") String secret,
+            @Value("${jwt.expiration:900000}") long jwtExpirationMs) {
+        byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
+        if (keyBytes.length < MIN_SECRET_BYTES) {
+            throw new IllegalStateException(
+                    "jwt.secret must be at least " + MIN_SECRET_BYTES + " bytes, got " + keyBytes.length);
+        }
+        this.signingKey = Keys.hmacShaKeyFor(keyBytes);
+        this.jwtExpirationMs = jwtExpirationMs;
     }
-
-
 
     // Token generation method with userId as the subject
     public String generateToken(UUID userId) {
@@ -36,10 +39,9 @@ public class JwtService {
                 .subject(userId.toString())
                 .issuedAt(new Date(System.currentTimeMillis()))
                 .expiration(new Date(System.currentTimeMillis() + jwtExpirationMs))
-                .signWith(getSigningKey())
+                .signWith(signingKey)
                 .compact();
     }
-
 
     // Extract the UserId (subject) from the token
     public UUID extractUserId(String token) {
@@ -55,11 +57,12 @@ public class JwtService {
 
     private Claims extractAllClaims(String token) {
         return Jwts.parser()
-                .verifyWith(getSigningKey())
+                .verifyWith(signingKey)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
     }
+
     public long getJwtExpirationTime() {
         return jwtExpirationMs / 1000; // Convert milliseconds to seconds
     }
