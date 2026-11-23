@@ -1,6 +1,8 @@
 package com.polduu.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -11,6 +13,8 @@ import java.util.UUID;
 import io.jsonwebtoken.JwtException;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -178,6 +182,84 @@ class AuthControllerTest {
                                 """))
                         .andExpect(status().isBadRequest())
                         .andExpect(jsonPath("$.fieldErrors.password").exists());
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"ab", "a b", "pol!", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
+        void register_withInvalidUsername_returns400(String username) throws Exception {
+                mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(registerBody(username, "pol@test.com", "secret123", "Pol")))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.fieldErrors.username").exists());
+
+                verify(userService, never()).createUser(any());
+        }
+
+        @Test
+        void register_withTooLongFullName_returns400() throws Exception {
+                mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(registerBody("pol", "pol@test.com", "secret123", "a".repeat(101))))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.fieldErrors.fullName").exists());
+        }
+
+        // BCrypt only uses the first 72 bytes; "ñ" takes 2 bytes in UTF-8
+        @Test
+        void register_withPasswordOf72Bytes_returns201() throws Exception {
+                when(userService.createUser(any())).thenReturn(new AuthResponseDto(ACCESS_TOKEN, REFRESH_TOKEN, 900L,
+                        new UserResponseDto(UUID.randomUUID(), USERNAME, EMAIL, FULLNAME, null)));
+
+                mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(registerBody("pol", "pol@test.com", "ñ".repeat(36), "Pol")))
+                        .andExpect(status().isCreated());
+        }
+
+        @Test
+        void register_withPasswordOver72Bytes_returns400() throws Exception {
+                mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(registerBody("pol", "pol@test.com", "ñ".repeat(37), "Pol")))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.fieldErrors.password").value("Password is too long"));
+
+                verify(userService, never()).createUser(any());
+        }
+
+        @Test
+        void register_normalizesEmailToLowercase() throws Exception {
+                when(userService.createUser(any())).thenReturn(new AuthResponseDto(ACCESS_TOKEN, REFRESH_TOKEN, 900L,
+                        new UserResponseDto(UUID.randomUUID(), USERNAME, EMAIL, FULLNAME, null)));
+
+                mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(registerBody("pol", " Pol@Test.COM ", "secret123", "Pol")))
+                        .andExpect(status().isCreated());
+
+                verify(userService).createUser(argThat(request -> request.email().equals("pol@test.com")));
+        }
+
+        @Test
+        void login_normalizesEmailToLowercase() throws Exception {
+                when(userService.logInUser(any())).thenReturn(new AuthResponseDto(ACCESS_TOKEN, REFRESH_TOKEN, 900L,
+                        new UserResponseDto(UUID.randomUUID(), USERNAME, EMAIL, FULLNAME, null)));
+
+                mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"email":" Pol@Test.COM ","password":"secret123"}
+                        """))
+                        .andExpect(status().isOk());
+
+                verify(userService).logInUser(argThat(request -> request.email().equals("pol@test.com")));
+        }
+
+        private static String registerBody(String username, String email, String password, String fullName) {
+                return """
+                        {"username":"%s","email":"%s","password":"%s","fullName":"%s"}
+                        """.formatted(username, email, password, fullName);
         }
 
         /*------------------------------------------------------------------------------------------------*/
