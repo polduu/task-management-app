@@ -7,7 +7,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-@SpringBootTest
+@SpringBootTest(properties = "jwt.secret=test-only-secret-key-at-least-32-bytes-long")
 @Testcontainers
 class BackendApplicationTests {
 
