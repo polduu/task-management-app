@@ -1,11 +1,18 @@
 package com.polduu.service;
 
+import java.io.IOException;
+import java.security.GeneralSecurityException;
+import java.text.Normalizer;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.polduu.dto.auth.AuthResponseDto;
 import com.polduu.dto.auth.GitHubAuthRequestDto;
 import com.polduu.dto.auth.GoogleAuthRequestDto;
@@ -23,9 +30,13 @@ import com.polduu.model.User;
 import com.polduu.repository.UserRepository;
 import com.polduu.security.JwtService;
 
+
 import org.springframework.transaction.annotation.Transactional;
 
+import lombok.extern.slf4j.Slf4j;
 
+
+@Slf4j
 @Service 
 @Transactional 
 public class UserService {
@@ -36,18 +47,22 @@ public class UserService {
     private final RefreshTokenService refreshTokenService;
     private final UserMapper userMapper;
 
+    private final GoogleIdTokenVerifier googleIdTokenVerifier;
+
     // Checked when the email is unknown or has no password, so every failed login costs one
     // password hash comparison and response times don't reveal which emails are registered
     private final String dummyPasswordHash;
 
     public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService
             , RefreshTokenService refreshTokenService, UserMapper userMapper
+            , GoogleIdTokenVerifier googleIdTokenVerifier
     ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
         this.userMapper = userMapper;
+        this.googleIdTokenVerifier = googleIdTokenVerifier;
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
@@ -68,8 +83,77 @@ public class UserService {
     }
 
     public AuthResponseDto googleLogin(GoogleAuthRequestDto googleAuthRequest) {
-        throw new UnsupportedOperationException("Google login is not implemented");
+        GoogleIdToken.Payload payload = verifyGoogleToken(googleAuthRequest.idToken());
+
+        if (payload.getEmail() == null || !Boolean.TRUE.equals(payload.getEmailVerified())) {
+            log.warn("Google login rejected: email missing or not verified");
+            throw new InvalidCredentialsException();
+        }
+        String email = payload.getEmail().trim().toLowerCase(Locale.ROOT);
+
+        String name = (String) payload.get("name");
+        String providerId = payload.getSubject();
+
+
+        User user = userRepository.findByAuthProviderAndProviderId(AuthProvider.GOOGLE, providerId).orElseGet(() -> {
+            if (userRepository.existsByEmail(email)) {
+                log.warn("Google login rejected: email belongs to an account not linked to Google");
+                throw new ConflictException("Email already exists");
+            }
+            User created = new User();
+            created.setUsername(generateUsername(name));
+            created.setEmail(email);
+            String fullName = name == null || name.isBlank() ? "User" : name;
+            created.setFullName(fullName.substring(0, Math.min(fullName.length(), 100)));
+            created.setAuthProvider(AuthProvider.GOOGLE);
+            created.setProviderId(providerId);
+            return userRepository.save(created);
+        });
+
+        RefreshTokenService.Session session = refreshTokenService.startSession(user);
+        String token = jwtService.generateToken(user.getId(), session.id());
+
+        return toAuthResponseDto(user, token, session.refreshToken());
     }
+
+    // The token is never logged: it is a credential and carries personal data
+    private GoogleIdToken.Payload verifyGoogleToken(String idTokenString) {
+        GoogleIdToken idToken;
+        try {
+            idToken = googleIdTokenVerifier.verify(idTokenString);
+        } catch (IOException | GeneralSecurityException e) {
+            log.error("Could not verify Google ID token", e);
+            throw new InvalidCredentialsException();
+        } catch (RuntimeException e) {
+            log.warn("Malformed Google ID token: {}", e.getClass().getSimpleName());
+            throw new InvalidCredentialsException();
+        }
+        if (idToken == null) {
+            log.warn("Google ID token rejected by the verifier");
+            throw new InvalidCredentialsException();
+        }
+        return idToken.getPayload();
+    }
+
+    private String generateUsername(String name) {
+        String base = Normalizer.normalize(name == null ? "" : name, Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")               // quita acentos
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "_")          // resto de caracteres a _
+                .replaceAll("^_|_$", "");
+
+        if (base.length() < 3) {
+            base = "user";
+        }
+        base = base.substring(0, Math.min(base.length(), 40)); // deja sitio al sufijo
+
+        String candidate = base;
+        while (userRepository.existsByUsername(candidate)) {
+            candidate = base + "_" + UUID.randomUUID().toString().substring(0, 4);
+        }
+        return candidate;
+        }
+
 
     public AuthResponseDto githubLogin(GitHubAuthRequestDto githubAuthRequest) {
         throw new UnsupportedOperationException("GitHub login is not implemented");
@@ -162,6 +246,31 @@ public class UserService {
         refreshTokenService.endAllSessions(userId);
     }
 
+    public void linkGoogleAccount(UUID userId, GoogleAuthRequestDto request) {
+
+        GoogleIdToken.Payload payload = verifyGoogleToken(request.idToken());
+
+        if (!Boolean.TRUE.equals(payload.getEmailVerified())) {
+            log.warn("Google link rejected for user {}: email not verified", userId);
+            throw new InvalidCredentialsException();
+        }
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        if (!user.getEmail().equalsIgnoreCase(payload.getEmail())) {
+            log.warn("Google link rejected for user {}: email does not match", userId);
+            throw new ConflictException("Google account email does not match user email");
+        }
+        boolean linkedElsewhere = userRepository.findByAuthProviderAndProviderId(AuthProvider.GOOGLE, payload.getSubject())
+                .filter(other -> !other.getId().equals(userId))
+                .isPresent();
+        if (linkedElsewhere) {
+            log.warn("Google link rejected for user {}: Google account linked to another user", userId);
+            throw new ConflictException("Google account already linked");
+        }
+        user.setAuthProvider(AuthProvider.GOOGLE);
+        user.setProviderId(payload.getSubject());
+        log.info("Google account linked to user {}", userId);
+    }
 
 
     

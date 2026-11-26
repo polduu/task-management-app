@@ -30,6 +30,7 @@ public interface UserMapper {
     @Mapping(target = "id", ignore = true)            
     @Mapping(target = "imageUrl", ignore = true)     
     @Mapping(target = "createdAt", ignore = true) 
+    @Mapping(target = "providerId", ignore = true)
     User toEntity(UserRegisterRequestDto request, String passwordHash, AuthProvider authProvider);
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
@@ -39,5 +40,6 @@ public interface UserMapper {
     @Mapping(target = "authProvider", ignore = true)
     @Mapping (target = "email", ignore = true) // Prevents overwriting the email during updates
     @Mapping (target = "createdAt", ignore = true) // Prevents overwriting the createdAt timestamp during updates   
+    @Mapping (target = "providerId", ignore = true) // Prevents overwriting the providerId during updates
     void updateUserFromDto(UserPatchRequestDto dto, @MappingTarget User user);
 }

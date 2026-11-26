@@ -26,6 +26,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.polduu.dto.auth.AuthResponseDto;
+import com.polduu.dto.auth.GoogleAuthRequestDto;
 import com.polduu.dto.user.UserResponseDto;
 import com.polduu.exception.ConflictException;
 import com.polduu.exception.GlobalExceptionHandler;
@@ -356,6 +357,62 @@ class AuthControllerTest {
                         .andExpect(status().isUnauthorized());
 
                 verify(userService, never()).logoutAllSessions(any());
+        }
+
+        // Google Tests
+
+        @Test
+        void googleLogin_withoutAccessToken_returns200() throws Exception {
+                when(userService.googleLogin(any())).thenReturn(new AuthResponseDto(ACCESS_TOKEN, REFRESH_TOKEN, 900L,
+                        new UserResponseDto(UUID.randomUUID(), USERNAME, EMAIL, FULLNAME, null)));
+
+                mockMvc.perform(post("/api/auth/google")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"idToken":"id-token"}
+                        """))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.accessToken").value(ACCESS_TOKEN));
+        }
+
+        @Test
+        void googleLogin_withBlankIdToken_returns400() throws Exception {
+                mockMvc.perform(post("/api/auth/google")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"idToken":" "}
+                        """))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.fieldErrors.idToken").exists());
+
+                verify(userService, never()).googleLogin(any());
+        }
+
+        @Test
+        void linkGoogle_withToken_linksThatUser() throws Exception {
+                UUID userId = UUID.randomUUID();
+
+                mockMvc.perform(post("/api/auth/google/link")
+                        .with(authentication(new UsernamePasswordAuthenticationToken(userId, null, List.of())))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"idToken":"id-token"}
+                        """))
+                        .andExpect(status().isNoContent());
+
+                verify(userService).linkGoogleAccount(userId, new GoogleAuthRequestDto("id-token"));
+        }
+
+        @Test
+        void linkGoogle_withoutToken_returns401() throws Exception {
+                mockMvc.perform(post("/api/auth/google/link")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"idToken":"id-token"}
+                        """))
+                        .andExpect(status().isUnauthorized());
+
+                verify(userService, never()).linkGoogleAccount(any(), any());
         }
 
 }
