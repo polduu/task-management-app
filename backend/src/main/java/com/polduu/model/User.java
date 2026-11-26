@@ -15,6 +15,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.persistence.UniqueConstraint;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -22,7 +23,7 @@ import lombok.Getter;
 import lombok.Setter;
  
 @Entity 
-@Table(name = "users")
+@Table(name = "users", uniqueConstraints = @UniqueConstraint(columnNames = {"auth_provider", "provider_id"}))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -62,7 +63,8 @@ public class User {
     @Column (name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-
+    @Column (name = "provider_id", length = 255)
+    private String providerId;
 
 
 }

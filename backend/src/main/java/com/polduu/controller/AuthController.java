@@ -48,6 +48,14 @@ public class AuthController {
         return userService.googleLogin(googleAuthRequest);
     }
 
+    @PostMapping ("/google/link")
+    @ResponseStatus (code = HttpStatus.NO_CONTENT)
+    public void linkGoogle(@AuthenticationPrincipal UUID userId,
+            @Valid @RequestBody GoogleAuthRequestDto request) {
+        log.info("Google link endpoint hit");
+        userService.linkGoogleAccount(userId, request);
+    }
+
     @PostMapping ("/github")
     public AuthResponseDto githubLogin(@Valid @RequestBody GitHubAuthRequestDto githubAuthRequest) {
         log.info("GitHub login endpoint hit");
