@@ -1,18 +1,26 @@
 CREATE TABLE users (
     id            uuid                        NOT NULL,
-    auth_provider varchar(255)                NOT NULL,
     created_at    timestamp(6) with time zone NOT NULL,
     email         varchar(255)                NOT NULL,
     full_name     varchar(100)                NOT NULL,
     image_url     varchar(500),
     password_hash varchar(60),
-    provider_id   varchar(255),
     username      varchar(50)                 NOT NULL,
     CONSTRAINT users_pkey PRIMARY KEY (id),
     CONSTRAINT uk6dotkott2kjsp8vw4d0m25fb7 UNIQUE (email),
-    CONSTRAINT ukr43af9ap4edm43mmtq01oddj6 UNIQUE (username),
-    CONSTRAINT uk438461sdkk3sk20tsac99ka6a UNIQUE (auth_provider, provider_id),
-    CONSTRAINT users_auth_provider_check CHECK (auth_provider IN ('LOCAL', 'GOOGLE', 'GITHUB'))
+    CONSTRAINT ukr43af9ap4edm43mmtq01oddj6 UNIQUE (username)
+);
+
+CREATE TABLE user_identities (
+    id          uuid         NOT NULL,
+    user_id     uuid         NOT NULL,
+    provider    varchar(20)  NOT NULL,
+    provider_id varchar(255) NOT NULL,
+    CONSTRAINT user_identities_pkey PRIMARY KEY (id),
+    CONSTRAINT uk_user_identity_provider_account UNIQUE (provider, provider_id),
+    CONSTRAINT uk_user_identity_user_provider UNIQUE (user_id, provider),
+    CONSTRAINT fk_user_identity_user FOREIGN KEY (user_id) REFERENCES users (id),
+    CONSTRAINT user_identities_provider_check CHECK (provider IN ('GOOGLE', 'GITHUB'))
 );
 
 CREATE TABLE refresh_tokens (
@@ -20,6 +28,7 @@ CREATE TABLE refresh_tokens (
     created_at        timestamp(6) with time zone NOT NULL,
     expires_at        timestamp(6) with time zone NOT NULL,
     family_expires_at timestamp(6) with time zone NOT NULL,
+    session_started_at timestamp(6) with time zone NOT NULL,
     family_id         uuid                        NOT NULL,
     revoked_at        timestamp(6) with time zone,
     token_hash        varchar(64)                 NOT NULL,

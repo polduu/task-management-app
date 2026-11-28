@@ -42,6 +42,7 @@ class JwtAuthenticationFilterTest {
         MockFilterChain chain = run("Bearer token");
 
         assertThat(SecurityContextHolder.getContext().getAuthentication().getPrincipal()).isEqualTo(userId);
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getDetails()).isEqualTo(sessionId);
         assertThat(chain.getRequest()).isNotNull();
     }
 

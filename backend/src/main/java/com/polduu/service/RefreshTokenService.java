@@ -69,7 +69,7 @@ public class RefreshTokenService {
             refreshTokenRepository.revokeFamily(active.get(i).getFamilyId(), now);
         }
         UUID sessionId = UUID.randomUUID();
-        return new Session(sessionId, issue(user, sessionId, now.plus(maxSessionAge), now));
+        return new Session(sessionId, issue(user, sessionId, now, now.plus(maxSessionAge), now));
     }
 
     // noRollbackFor: revoking a session on reuse must be saved even though the request fails
@@ -102,7 +102,8 @@ public class RefreshTokenService {
 
         User user = current.getUser();
         return new Rotation(user, current.getFamilyId(),
-                issue(user, current.getFamilyId(), current.getFamilyExpiresAt(), now));
+                issue(user, current.getFamilyId(), current.getSessionStartedAt(),
+                        current.getFamilyExpiresAt(), now));
     }
 
     // Logout: closes only the session the token belongs to
@@ -115,6 +116,14 @@ public class RefreshTokenService {
     @Transactional(readOnly = true)
     public boolean isSessionActive(UUID sessionId) {
         return refreshTokenRepository.existsByFamilyIdAndRevokedAtIsNull(sessionId);
+    }
+
+    // Whether the user signed in (not just refreshed) less than this long ago
+    @Transactional(readOnly = true)
+    public boolean startedWithin(UUID sessionId, Duration window) {
+        return sessionId != null && refreshTokenRepository.findFirstByFamilyId(sessionId)
+                .map(token -> token.getSessionStartedAt().plus(window).isAfter(clock.instant()))
+                .orElse(false);
     }
 
     @Transactional
@@ -130,7 +139,7 @@ public class RefreshTokenService {
         log.info("Purged {} stale refresh tokens", deleted);
     }
 
-    private String issue(User user, UUID familyId, Instant familyExpiresAt, Instant now) {
+    private String issue(User user, UUID familyId, Instant sessionStartedAt, Instant familyExpiresAt, Instant now) {
         String rawToken = newRawToken();
         Instant idleExpiry = now.plus(idleTimeout);
 
@@ -139,6 +148,7 @@ public class RefreshTokenService {
         token.setFamilyId(familyId);
         token.setUser(user);
         token.setCreatedAt(now);
+        token.setSessionStartedAt(sessionStartedAt);
         token.setFamilyExpiresAt(familyExpiresAt);
         token.setExpiresAt(idleExpiry.isBefore(familyExpiresAt) ? idleExpiry : familyExpiresAt);
         refreshTokenRepository.save(token);

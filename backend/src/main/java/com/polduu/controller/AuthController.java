@@ -4,6 +4,8 @@ import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.annotation.CurrentSecurityContext;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -13,12 +15,20 @@ import org.springframework.web.bind.annotation.RestController;
 import com.polduu.dto.auth.AuthResponseDto;
 import com.polduu.dto.auth.GitHubAuthRequestDto;
 import com.polduu.dto.auth.GoogleAuthRequestDto;
+import com.polduu.dto.auth.LinkGitHubRequestDto;
+import com.polduu.dto.auth.LinkGoogleRequestDto;
+import com.polduu.dto.auth.LinkedAccountsResponseDto;
 import com.polduu.dto.auth.RefreshTokenRequestDto;
+import com.polduu.dto.auth.UnlinkAccountRequestDto;
 import com.polduu.dto.auth.UserLoginRequestDto;
 import com.polduu.dto.auth.UserRegisterRequestDto;
+import com.polduu.model.AuthProvider;
+import com.polduu.security.RateLimiter;
+import com.polduu.service.AccountLinkingService;
 import com.polduu.service.UserService;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 
@@ -30,9 +40,14 @@ import lombok.extern.slf4j.Slf4j;
 public class AuthController {
 
     private final UserService userService;
+    private final AccountLinkingService accountLinkingService;
+    private final RateLimiter rateLimiter;
 
-    public AuthController(UserService userService) {
+    public AuthController(UserService userService, AccountLinkingService accountLinkingService,
+            RateLimiter rateLimiter) {
+        this.rateLimiter = rateLimiter;
         this.userService = userService;
+        this.accountLinkingService = accountLinkingService;
     }
 
     @PostMapping ("/register")
@@ -48,12 +63,27 @@ public class AuthController {
         return userService.googleLogin(googleAuthRequest);
     }
 
+    @GetMapping ("/identities")
+    public LinkedAccountsResponseDto getLinkedAccounts(@AuthenticationPrincipal UUID userId) {
+        return accountLinkingService.getLinkedAccounts(userId);
+    }
+
     @PostMapping ("/google/link")
     @ResponseStatus (code = HttpStatus.NO_CONTENT)
     public void linkGoogle(@AuthenticationPrincipal UUID userId,
-            @Valid @RequestBody GoogleAuthRequestDto request) {
+            @CurrentSecurityContext(expression = "authentication.details") UUID sessionId,
+            @Valid @RequestBody LinkGoogleRequestDto request) {
         log.info("Google link endpoint hit");
-        userService.linkGoogleAccount(userId, request);
+        accountLinkingService.linkGoogleAccount(userId, sessionId, request);
+    }
+
+    @PostMapping ("/google/unlink")
+    @ResponseStatus (code = HttpStatus.NO_CONTENT)
+    public void unlinkGoogle(@AuthenticationPrincipal UUID userId,
+            @CurrentSecurityContext(expression = "authentication.details") UUID sessionId,
+            @Valid @RequestBody UnlinkAccountRequestDto request) {
+        log.info("Google unlink endpoint hit");
+        accountLinkingService.unlinkAccount(userId, sessionId, AuthProvider.GOOGLE, request.password());
     }
 
     @PostMapping ("/github")
@@ -62,9 +92,29 @@ public class AuthController {
         return userService.githubLogin(githubAuthRequest);
     }
 
+    @PostMapping ("/github/link")
+    @ResponseStatus (code = HttpStatus.NO_CONTENT)
+    public void linkGitHub(@AuthenticationPrincipal UUID userId,
+            @CurrentSecurityContext(expression = "authentication.details") UUID sessionId,
+            @Valid @RequestBody LinkGitHubRequestDto request) {
+        log.info("GitHub link endpoint hit");
+        accountLinkingService.linkGitHubAccount(userId, sessionId, request);
+    }
+
+    @PostMapping ("/github/unlink")
+    @ResponseStatus (code = HttpStatus.NO_CONTENT)
+    public void unlinkGitHub(@AuthenticationPrincipal UUID userId,
+            @CurrentSecurityContext(expression = "authentication.details") UUID sessionId,
+            @Valid @RequestBody UnlinkAccountRequestDto request) {
+        log.info("GitHub unlink endpoint hit");
+        accountLinkingService.unlinkAccount(userId, sessionId, AuthProvider.GITHUB, request.password());
+    }
+
     @PostMapping ("/login")
-    public AuthResponseDto loginUser(@Valid @RequestBody UserLoginRequestDto userLoginRequestDto) {
+    public AuthResponseDto loginUser(@Valid @RequestBody UserLoginRequestDto userLoginRequestDto,
+            HttpServletRequest request) {
         log.info("Login endpoint hit");
+        rateLimiter.checkLogin(request.getRemoteAddr(), userLoginRequestDto.email());
         return userService.logInUser(userLoginRequestDto);
     }
 

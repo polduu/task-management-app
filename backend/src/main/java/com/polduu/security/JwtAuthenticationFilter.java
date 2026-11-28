@@ -40,8 +40,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 JwtService.AccessToken accessToken = jwtService.parseAccessToken(authHeader.substring(7));
                 // A logged-out session must not keep working until its access token expires
                 if (refreshTokenService.isSessionActive(accessToken.sessionId())) {
-                    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
-                            accessToken.userId(), null, Collections.emptyList()));
+                    UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                            accessToken.userId(), null, Collections.emptyList());
+                    authentication.setDetails(accessToken.sessionId());
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
                 }
             } catch (JwtException | IllegalArgumentException e) {
                 // Token invàlid/caducat: no autentiquem; l'EntryPoint respondrà 401 si cal

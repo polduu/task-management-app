@@ -26,7 +26,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.polduu.exception.InvalidRefreshTokenException;
-import com.polduu.model.AuthProvider;
 import com.polduu.model.RefreshToken;
 import com.polduu.model.User;
 import com.polduu.repository.RefreshTokenRepository;
@@ -49,7 +48,7 @@ class RefreshTokenServiceTest {
         service = new RefreshTokenService(refreshTokenRepository, Clock.fixed(NOW, ZoneOffset.UTC),
                 IDLE_TIMEOUT, MAX_SESSION_AGE);
         user = User.builder().id(UUID.randomUUID()).username("pol").email("pol@test.com")
-                .fullName("Pol").authProvider(AuthProvider.LOCAL).build();
+                .fullName("Pol").build();
     }
 
     /*----------------------------------------------------------------------------- */
@@ -245,6 +244,27 @@ class RefreshTokenServiceTest {
     /*----------------------------------------------------------------------------- */
     // Helpers
 
+    @Test
+    void rotate_keepsTheTimeTheSessionStarted() {
+        RefreshToken current = token();
+        when(refreshTokenRepository.findByTokenHash(RefreshTokenService.hash(RAW_TOKEN)))
+                .thenReturn(Optional.of(current));
+        when(refreshTokenRepository.markUsed(current.getId(), NOW)).thenReturn(1);
+
+        service.rotate(RAW_TOKEN);
+
+        assertThat(captureSaved().getSessionStartedAt()).isEqualTo(current.getSessionStartedAt());
+    }
+
+    @Test
+    void startedWithin_dependsOnlyOnWhenTheSessionStarted() {
+        RefreshToken current = token();
+        when(refreshTokenRepository.findFirstByFamilyId(current.getFamilyId())).thenReturn(Optional.of(current));
+
+        assertThat(service.startedWithin(current.getFamilyId(), Duration.ofDays(11))).isTrue();
+        assertThat(service.startedWithin(current.getFamilyId(), Duration.ofDays(9))).isFalse();
+    }
+
     private RefreshToken token() {
         RefreshToken token = new RefreshToken();
         token.setId(UUID.randomUUID());
@@ -253,6 +273,7 @@ class RefreshTokenServiceTest {
         token.setUser(user);
         token.setCreatedAt(NOW.minus(Duration.ofHours(1)));
         token.setExpiresAt(NOW.plus(Duration.ofDays(6)));
+        token.setSessionStartedAt(NOW.minus(Duration.ofDays(10)));
         token.setFamilyExpiresAt(NOW.plus(Duration.ofDays(20)));
         return token;
     }

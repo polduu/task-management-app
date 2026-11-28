@@ -16,6 +16,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
@@ -84,6 +86,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     // ---- Application exceptions (unknown to the parent class) ----
 
+    // 400, not 401: the session is fine, what failed is the Google token or GitHub code being linked
+    @ExceptionHandler(ExternalAccountRejectedException.class)
+    public ResponseEntity<Object> handleExternalAccountRejected(
+            ExternalAccountRejectedException ex, WebRequest request) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), request, null);
+    }
+
     // 401: wrong email or password
     @ExceptionHandler(InvalidCredentialsException.class)
     public ResponseEntity<Object> handleInvalidCredentials(
@@ -98,11 +107,29 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return error(HttpStatus.UNAUTHORIZED, ex.getMessage(), request, null);
     }
 
+    // 403, not 401: the access token is valid, so the client must not try to refresh it
+    @ExceptionHandler(ReauthenticationRequiredException.class)
+    public ResponseEntity<Object> handleReauthenticationRequired(
+            ReauthenticationRequiredException ex, WebRequest request) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), request, null);
+    }
+
     // 403: authenticated user without permission (e.g. @PreAuthorize)
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Object> handleAccessDenied(
             AccessDeniedException ex, WebRequest request) {
         return error(HttpStatus.FORBIDDEN, "Access denied", request, null);
+    }
+
+    // 429: rate limit reached
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<Object> handleTooManyRequests(
+            TooManyRequestsException ex, WebRequest request) {
+        ResponseEntity<Object> response = error(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage(), request, null);
+        long retryAfterSeconds = Math.max(1, ex.getRetryAfter().plusMillis(999).toSeconds());
+        return ResponseEntity.status(response.getStatusCode())
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
+                .body(response.getBody());
     }
 
     // 404: requested resource does not exist
@@ -132,6 +159,17 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<Object> handleUnexpected(Exception ex, WebRequest request) {
         log.error("Unexpected error", ex);
         return error(HttpStatus.INTERNAL_SERVER_ERROR, "Internal server error", request, null);
+    }
+
+    // 502: a call to an external provider failed
+    @ExceptionHandler(RestClientException.class)
+    public ResponseEntity<Object> handleExternalService(
+            RestClientException ex, WebRequest request) {
+        String status = ex instanceof RestClientResponseException response
+                ? String.valueOf(response.getStatusCode().value())
+                : "none";
+        log.error("External service call failed: {} (status {})", ex.getClass().getSimpleName(), status);
+        return error(HttpStatus.BAD_GATEWAY, "External service unavailable", request, null);
     }
 
     // ---- Helper ----

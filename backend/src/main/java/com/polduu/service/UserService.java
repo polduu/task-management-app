@@ -1,7 +1,5 @@
 package com.polduu.service;
 
-import java.io.IOException;
-import java.security.GeneralSecurityException;
 import java.text.Normalizer;
 import java.util.Locale;
 import java.util.Optional;
@@ -9,10 +7,11 @@ import java.util.UUID;
 
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
 
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
-import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.polduu.dto.auth.AuthResponseDto;
 import com.polduu.dto.auth.GitHubAuthRequestDto;
 import com.polduu.dto.auth.GoogleAuthRequestDto;
@@ -27,11 +26,10 @@ import com.polduu.exception.ResourceNotFoundException;
 import com.polduu.mapper.UserMapper;
 import com.polduu.model.AuthProvider;
 import com.polduu.model.User;
+import com.polduu.model.UserIdentity;
+import com.polduu.repository.UserIdentityRepository;
 import com.polduu.repository.UserRepository;
 import com.polduu.security.JwtService;
-
-
-import org.springframework.transaction.annotation.Transactional;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -42,27 +40,32 @@ import lombok.extern.slf4j.Slf4j;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final UserIdentityRepository userIdentityRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
     private final UserMapper userMapper;
-
-    private final GoogleIdTokenVerifier googleIdTokenVerifier;
+    private final GoogleAuthClient googleAuthClient;
+    private final GitHubClient gitHubClient;
+    private final TransactionOperations transactions;
 
     // Checked when the email is unknown or has no password, so every failed login costs one
     // password hash comparison and response times don't reveal which emails are registered
     private final String dummyPasswordHash;
 
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService
-            , RefreshTokenService refreshTokenService, UserMapper userMapper
-            , GoogleIdTokenVerifier googleIdTokenVerifier
-    ) {
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService,
+            RefreshTokenService refreshTokenService, UserMapper userMapper,
+            GoogleAuthClient googleAuthClient, UserIdentityRepository userIdentityRepository,
+            GitHubClient gitHubClient, TransactionOperations transactions) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
         this.userMapper = userMapper;
-        this.googleIdTokenVerifier = googleIdTokenVerifier;
+        this.googleAuthClient = googleAuthClient;
+        this.userIdentityRepository = userIdentityRepository;
+        this.gitHubClient = gitHubClient;
+        this.transactions = transactions;
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
@@ -74,7 +77,7 @@ public class UserService {
         if (userRepository.existsByUsername(user.username())) {
             throw new ConflictException("Username already exists");
         }
-        User newUser = userMapper.toEntity(user, passwordEncoder.encode(user.password()), AuthProvider.LOCAL);
+        User newUser = userMapper.toEntity(user, passwordEncoder.encode(user.password()));
         User savedUser = userRepository.save(newUser);
         RefreshTokenService.Session session = refreshTokenService.startSession(savedUser);
         String token = jwtService.generateToken(savedUser.getId(), session.id());
@@ -83,7 +86,7 @@ public class UserService {
     }
 
     public AuthResponseDto googleLogin(GoogleAuthRequestDto googleAuthRequest) {
-        GoogleIdToken.Payload payload = verifyGoogleToken(googleAuthRequest.idToken());
+        GoogleIdToken.Payload payload = googleAuthClient.verify(googleAuthRequest.idToken());
 
         if (payload.getEmail() == null || !Boolean.TRUE.equals(payload.getEmailVerified())) {
             log.warn("Google login rejected: email missing or not verified");
@@ -94,45 +97,11 @@ public class UserService {
         String name = (String) payload.get("name");
         String providerId = payload.getSubject();
 
+        User user = userIdentityRepository.findByProviderAndProviderId(AuthProvider.GOOGLE, providerId)
+                .map(UserIdentity::getUser)
+                .orElseGet(() -> createSocialUser(email, name, AuthProvider.GOOGLE, providerId));
 
-        User user = userRepository.findByAuthProviderAndProviderId(AuthProvider.GOOGLE, providerId).orElseGet(() -> {
-            if (userRepository.existsByEmail(email)) {
-                log.warn("Google login rejected: email belongs to an account not linked to Google");
-                throw new ConflictException("Email already exists");
-            }
-            User created = new User();
-            created.setUsername(generateUsername(name));
-            created.setEmail(email);
-            String fullName = name == null || name.isBlank() ? "User" : name;
-            created.setFullName(fullName.substring(0, Math.min(fullName.length(), 100)));
-            created.setAuthProvider(AuthProvider.GOOGLE);
-            created.setProviderId(providerId);
-            return userRepository.save(created);
-        });
-
-        RefreshTokenService.Session session = refreshTokenService.startSession(user);
-        String token = jwtService.generateToken(user.getId(), session.id());
-
-        return toAuthResponseDto(user, token, session.refreshToken());
-    }
-
-    // The token is never logged: it is a credential and carries personal data
-    private GoogleIdToken.Payload verifyGoogleToken(String idTokenString) {
-        GoogleIdToken idToken;
-        try {
-            idToken = googleIdTokenVerifier.verify(idTokenString);
-        } catch (IOException | GeneralSecurityException e) {
-            log.error("Could not verify Google ID token", e);
-            throw new InvalidCredentialsException();
-        } catch (RuntimeException e) {
-            log.warn("Malformed Google ID token: {}", e.getClass().getSimpleName());
-            throw new InvalidCredentialsException();
-        }
-        if (idToken == null) {
-            log.warn("Google ID token rejected by the verifier");
-            throw new InvalidCredentialsException();
-        }
-        return idToken.getPayload();
+        return startSessionFor(user);
     }
 
     private String generateUsername(String name) {
@@ -155,8 +124,45 @@ public class UserService {
         }
 
 
-    public AuthResponseDto githubLogin(GitHubAuthRequestDto githubAuthRequest) {
-        throw new UnsupportedOperationException("GitHub login is not implemented");
+    // No transaction while waiting for GitHub, so a slow response doesn't hold a database connection
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public AuthResponseDto githubLogin(GitHubAuthRequestDto request) {
+        String accessToken = gitHubClient.exchangeCode(request.code());
+        GitHubClient.Profile profile = gitHubClient.fetchProfile(accessToken);
+
+        // The email is only needed to create an account: linked users don't depend on it
+        User user = userIdentityRepository.findByProviderAndProviderId(AuthProvider.GITHUB, profile.id())
+                .map(UserIdentity::getUser)
+                .orElseGet(() -> {
+                    String email = gitHubClient.fetchPrimaryVerifiedEmail(accessToken)
+                            .trim().toLowerCase(Locale.ROOT);
+                    return transactions.execute(status ->
+                            createSocialUser(email, profile.name(), AuthProvider.GITHUB, profile.id()));
+                });
+
+        return startSessionFor(user);
+    }
+
+    // An existing account with the same email is never taken over: it has to link the provider itself
+    private User createSocialUser(String email, String name, AuthProvider provider, String providerId) {
+        if (userRepository.existsByEmail(email)) {
+            log.warn("{} login rejected: email belongs to an account not linked to it", provider);
+            throw new ConflictException("Email already exists");
+        }
+        User created = new User();
+        created.setUsername(generateUsername(name));
+        created.setEmail(email);
+        String fullName = name == null || name.isBlank() ? "User" : name;
+        created.setFullName(fullName.substring(0, Math.min(fullName.length(), 100)));
+        User saved = userRepository.save(created);
+        userIdentityRepository.save(UserIdentity.of(saved, provider, providerId));
+        return saved;
+    }
+
+    private AuthResponseDto startSessionFor(User user) {
+        RefreshTokenService.Session session = refreshTokenService.startSession(user);
+        String token = jwtService.generateToken(user.getId(), session.id());
+        return toAuthResponseDto(user, token, session.refreshToken());
     }
 
     @Transactional(readOnly = true)
@@ -245,36 +251,4 @@ public class UserService {
     public void logoutAllSessions(UUID userId) {
         refreshTokenService.endAllSessions(userId);
     }
-
-    public void linkGoogleAccount(UUID userId, GoogleAuthRequestDto request) {
-
-        GoogleIdToken.Payload payload = verifyGoogleToken(request.idToken());
-
-        if (!Boolean.TRUE.equals(payload.getEmailVerified())) {
-            log.warn("Google link rejected for user {}: email not verified", userId);
-            throw new InvalidCredentialsException();
-        }
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        if (!user.getEmail().equalsIgnoreCase(payload.getEmail())) {
-            log.warn("Google link rejected for user {}: email does not match", userId);
-            throw new ConflictException("Google account email does not match user email");
-        }
-        boolean linkedElsewhere = userRepository.findByAuthProviderAndProviderId(AuthProvider.GOOGLE, payload.getSubject())
-                .filter(other -> !other.getId().equals(userId))
-                .isPresent();
-        if (linkedElsewhere) {
-            log.warn("Google link rejected for user {}: Google account linked to another user", userId);
-            throw new ConflictException("Google account already linked");
-        }
-        user.setAuthProvider(AuthProvider.GOOGLE);
-        user.setProviderId(payload.getSubject());
-        log.info("Google account linked to user {}", userId);
-    }
-
-
-    
-
-
-
 }

@@ -13,13 +13,13 @@ import java.security.GeneralSecurityException;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -29,11 +29,15 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.polduu.dto.auth.AuthResponseDto;
 import com.polduu.dto.auth.GoogleAuthRequestDto;
+import com.polduu.dto.auth.LinkGoogleRequestDto;
 import com.polduu.exception.ConflictException;
+import com.polduu.exception.ExternalAccountRejectedException;
 import com.polduu.exception.InvalidCredentialsException;
 import com.polduu.mapper.UserMapper;
 import com.polduu.model.AuthProvider;
 import com.polduu.model.User;
+import com.polduu.model.UserIdentity;
+import com.polduu.repository.UserIdentityRepository;
 import com.polduu.repository.UserRepository;
 import com.polduu.security.JwtService;
 
@@ -41,6 +45,7 @@ import com.polduu.security.JwtService;
 class GoogleAuthServiceTest {
 
     @Mock UserRepository userRepository;
+    @Mock UserIdentityRepository userIdentityRepository;
     @Mock PasswordEncoder passwordEncoder;
     @Mock JwtService jwtService;
     @Mock RefreshTokenService refreshTokenService;
@@ -48,7 +53,8 @@ class GoogleAuthServiceTest {
     @Spy
     private UserMapper userMapper = Mappers.getMapper(UserMapper.class);
 
-    @InjectMocks UserService userService;
+    private UserService userService;
+    private AccountLinkingService accountLinkingService;
 
     private static final String ID_TOKEN = "id-token";
     private static final String SUBJECT = "google-sub";
@@ -57,6 +63,16 @@ class GoogleAuthServiceTest {
     private final UUID userId = UUID.randomUUID();
     private final UUID sessionId = UUID.randomUUID();
     private final GoogleAuthRequestDto request = new GoogleAuthRequestDto(ID_TOKEN);
+    private final LinkGoogleRequestDto linkRequest = new LinkGoogleRequestDto(ID_TOKEN, "secret");
+
+    @BeforeEach
+    void setUp() {
+        GoogleAuthClient googleAuthClient = new GoogleAuthClient(googleIdTokenVerifier);
+        userService = new UserService(userRepository, passwordEncoder, jwtService, refreshTokenService, userMapper,
+                googleAuthClient, userIdentityRepository, null, null);
+        accountLinkingService = new AccountLinkingService(userRepository, userIdentityRepository, passwordEncoder,
+                refreshTokenService, googleAuthClient, null, null);
+    }
 
     // Token verification
 
@@ -125,8 +141,10 @@ class GoogleAuthServiceTest {
         assertThat(saved.getEmail()).isEqualTo(EMAIL);
         assertThat(saved.getUsername()).isEqualTo("jose_perez");
         assertThat(saved.getFullName()).isEqualTo("Jos\u00e9 P\u00e9rez");
-        assertThat(saved.getAuthProvider()).isEqualTo(AuthProvider.GOOGLE);
-        assertThat(saved.getProviderId()).isEqualTo(SUBJECT);
+        UserIdentity identity = savedIdentity();
+        assertThat(identity.getUser()).isSameAs(saved);
+        assertThat(identity.getProvider()).isEqualTo(AuthProvider.GOOGLE);
+        assertThat(identity.getProviderId()).isEqualTo(SUBJECT);
         assertThat(saved.getPasswordHash()).isNull();
         assertThat(response.accessToken()).isEqualTo("access");
         assertThat(response.refreshToken()).isEqualTo("refresh");
@@ -163,10 +181,8 @@ class GoogleAuthServiceTest {
 
     @Test
     void googleLogin_withExistingGoogleUser_logsInWithoutCreatingAnother() throws Exception {
-        User existing = user(AuthProvider.GOOGLE, SUBJECT);
         givenToken(payload("new-address@test.com"));
-        when(userRepository.findByAuthProviderAndProviderId(AuthProvider.GOOGLE, SUBJECT))
-                .thenReturn(Optional.of(existing));
+        givenGoogleAccountOf(user());
         givenSession();
 
         AuthResponseDto response = userService.googleLogin(request);
@@ -191,56 +207,73 @@ class GoogleAuthServiceTest {
     // Account linking
 
     @Test
-    void linkGoogleAccount_withMatchingEmail_linksAccountAndKeepsPassword() throws Exception {
-        User local = user(AuthProvider.LOCAL, null);
-        local.setPasswordHash("hash");
-        givenToken(payload("Pol@Test.com"));
+    void linkGoogleAccount_addsIdentityAndKeepsPassword() throws Exception {
+        User local = userWithPassword();
+        givenToken(payload(EMAIL));
         when(userRepository.findById(userId)).thenReturn(Optional.of(local));
         givenNoGoogleAccount();
 
-        userService.linkGoogleAccount(userId, request);
+        accountLinkingService.linkGoogleAccount(userId, sessionId, linkRequest);
 
-        assertThat(local.getAuthProvider()).isEqualTo(AuthProvider.GOOGLE);
-        assertThat(local.getProviderId()).isEqualTo(SUBJECT);
+        UserIdentity identity = savedIdentity();
+        assertThat(identity.getUser()).isSameAs(local);
+        assertThat(identity.getProvider()).isEqualTo(AuthProvider.GOOGLE);
+        assertThat(identity.getProviderId()).isEqualTo(SUBJECT);
         assertThat(local.getPasswordHash()).isEqualTo("hash");
+    }
+
+    @Test
+    void linkGoogleAccount_withDifferentEmail_linksWithoutChangingTheEmail() throws Exception {
+        User local = userWithPassword();
+        givenToken(payload("other@test.com"));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(local));
+        givenNoGoogleAccount();
+
+        accountLinkingService.linkGoogleAccount(userId, sessionId, linkRequest);
+
+        assertThat(savedIdentity().getUser()).isSameAs(local);
+        assertThat(local.getEmail()).isEqualTo(EMAIL);
     }
 
     @Test
     void linkGoogleAccount_withUnverifiedEmail_throwsInvalidCredentials() throws Exception {
         givenToken(payload(EMAIL).setEmailVerified(false));
-
-        assertThatThrownBy(() -> userService.linkGoogleAccount(userId, request))
-                .isInstanceOf(InvalidCredentialsException.class);
-
-        verify(userRepository, never()).findById(any());
-    }
-
-    @Test
-    void linkGoogleAccount_withDifferentEmail_throwsConflict() throws Exception {
-        User local = user(AuthProvider.LOCAL, null);
-        givenToken(payload("other@test.com"));
+        User local = userWithPassword();
         when(userRepository.findById(userId)).thenReturn(Optional.of(local));
 
-        assertThatThrownBy(() -> userService.linkGoogleAccount(userId, request))
-                .isInstanceOf(ConflictException.class);
+        assertThatThrownBy(() -> accountLinkingService.linkGoogleAccount(userId, sessionId, linkRequest))
+                .isInstanceOf(ExternalAccountRejectedException.class);
 
-        assertThat(local.getProviderId()).isNull();
+        verify(userIdentityRepository, never()).save(any());
     }
 
     @Test
     void linkGoogleAccount_whenLinkedToAnotherUser_throwsConflict() throws Exception {
-        User local = user(AuthProvider.LOCAL, null);
-        User other = user(AuthProvider.GOOGLE, SUBJECT);
+        User other = user();
         other.setId(UUID.randomUUID());
         givenToken(payload(EMAIL));
+        User local = userWithPassword();
         when(userRepository.findById(userId)).thenReturn(Optional.of(local));
-        when(userRepository.findByAuthProviderAndProviderId(AuthProvider.GOOGLE, SUBJECT))
-                .thenReturn(Optional.of(other));
+        givenGoogleAccountOf(other);
 
-        assertThatThrownBy(() -> userService.linkGoogleAccount(userId, request))
+        assertThatThrownBy(() -> accountLinkingService.linkGoogleAccount(userId, sessionId, linkRequest))
                 .isInstanceOf(ConflictException.class);
 
-        assertThat(local.getProviderId()).isNull();
+        verify(userIdentityRepository, never()).save(any());
+    }
+
+    @Test
+    void linkGoogleAccount_whenUserAlreadyHasGoogle_throwsConflict() throws Exception {
+        givenToken(payload(EMAIL));
+        User local = userWithPassword();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(local));
+        givenNoGoogleAccount();
+        when(userIdentityRepository.existsByUserIdAndProvider(userId, AuthProvider.GOOGLE)).thenReturn(true);
+
+        assertThatThrownBy(() -> accountLinkingService.linkGoogleAccount(userId, sessionId, linkRequest))
+                .isInstanceOf(ConflictException.class);
+
+        verify(userIdentityRepository, never()).save(any());
     }
 
     // Helpers
@@ -259,8 +292,23 @@ class GoogleAuthServiceTest {
     }
 
     private void givenNoGoogleAccount() {
-        when(userRepository.findByAuthProviderAndProviderId(AuthProvider.GOOGLE, SUBJECT))
+        when(userIdentityRepository.findByProviderAndProviderId(AuthProvider.GOOGLE, SUBJECT))
                 .thenReturn(Optional.empty());
+    }
+
+    private void givenGoogleAccountOf(User owner) {
+        UserIdentity identity = new UserIdentity();
+        identity.setUser(owner);
+        identity.setProvider(AuthProvider.GOOGLE);
+        identity.setProviderId(SUBJECT);
+        when(userIdentityRepository.findByProviderAndProviderId(AuthProvider.GOOGLE, SUBJECT))
+                .thenReturn(Optional.of(identity));
+    }
+
+    private UserIdentity savedIdentity() {
+        ArgumentCaptor<UserIdentity> captor = ArgumentCaptor.forClass(UserIdentity.class);
+        verify(userIdentityRepository).save(captor.capture());
+        return captor.getValue();
     }
 
     private void givenSavedUserGetsId() {
@@ -283,14 +331,19 @@ class GoogleAuthServiceTest {
         return captor.getValue();
     }
 
-    private User user(AuthProvider provider, String providerId) {
+    private User userWithPassword() {
+        User user = user();
+        user.setPasswordHash("hash");
+        when(passwordEncoder.matches("secret", "hash")).thenReturn(true);
+        return user;
+    }
+
+    private User user() {
         User user = new User();
         user.setId(userId);
         user.setEmail(EMAIL);
         user.setUsername("pol");
         user.setFullName("Pol");
-        user.setAuthProvider(provider);
-        user.setProviderId(providerId);
         return user;
     }
 }
