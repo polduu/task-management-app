@@ -23,10 +23,12 @@ import com.polduu.dto.auth.UnlinkAccountRequestDto;
 import com.polduu.dto.auth.UserLoginRequestDto;
 import com.polduu.dto.auth.UserRegisterRequestDto;
 import com.polduu.model.AuthProvider;
+import com.polduu.security.RateLimiter;
 import com.polduu.service.AccountLinkingService;
 import com.polduu.service.UserService;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 
@@ -39,8 +41,11 @@ public class AuthController {
 
     private final UserService userService;
     private final AccountLinkingService accountLinkingService;
+    private final RateLimiter rateLimiter;
 
-    public AuthController(UserService userService, AccountLinkingService accountLinkingService) {
+    public AuthController(UserService userService, AccountLinkingService accountLinkingService,
+            RateLimiter rateLimiter) {
+        this.rateLimiter = rateLimiter;
         this.userService = userService;
         this.accountLinkingService = accountLinkingService;
     }
@@ -106,8 +111,10 @@ public class AuthController {
     }
 
     @PostMapping ("/login")
-    public AuthResponseDto loginUser(@Valid @RequestBody UserLoginRequestDto userLoginRequestDto) {
+    public AuthResponseDto loginUser(@Valid @RequestBody UserLoginRequestDto userLoginRequestDto,
+            HttpServletRequest request) {
         log.info("Login endpoint hit");
+        rateLimiter.checkLogin(request.getRemoteAddr(), userLoginRequestDto.email());
         return userService.logInUser(userLoginRequestDto);
     }
 

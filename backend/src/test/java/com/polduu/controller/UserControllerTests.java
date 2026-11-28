@@ -29,9 +29,11 @@ import com.polduu.dto.user.PublicUserResponseDto;
 import com.polduu.dto.user.UserPatchRequestDto;
 import com.polduu.dto.user.UserResponseDto;
 import com.polduu.exception.ConflictException;
+import com.polduu.config.AppConfig;
 import com.polduu.exception.GlobalExceptionHandler;
 import com.polduu.exception.ResourceNotFoundException;
 import com.polduu.security.JwtService;
+import com.polduu.security.RateLimiter;
 import com.polduu.security.SecurityConfig;
 import com.polduu.service.RefreshTokenService;
 import com.polduu.service.UserService;
@@ -39,7 +41,7 @@ import com.polduu.service.UserService;
 import io.jsonwebtoken.JwtException;
 
 @WebMvcTest(UserController.class)
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, AppConfig.class, RateLimiter.class})
 class UserControllerTest {
 
     @Autowired MockMvc mockMvc;

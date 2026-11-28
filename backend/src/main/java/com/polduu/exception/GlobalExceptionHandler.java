@@ -121,6 +121,17 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return error(HttpStatus.FORBIDDEN, "Access denied", request, null);
     }
 
+    // 429: rate limit reached
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<Object> handleTooManyRequests(
+            TooManyRequestsException ex, WebRequest request) {
+        ResponseEntity<Object> response = error(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage(), request, null);
+        long retryAfterSeconds = Math.max(1, ex.getRetryAfter().plusMillis(999).toSeconds());
+        return ResponseEntity.status(response.getStatusCode())
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
+                .body(response.getBody());
+    }
+
     // 404: requested resource does not exist
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<Object> handleNotFound(

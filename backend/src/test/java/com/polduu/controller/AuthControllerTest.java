@@ -37,18 +37,20 @@ import com.polduu.dto.auth.AuthResponseDto;
 import org.springframework.web.client.RestClientException;
 import com.polduu.dto.user.UserResponseDto;
 import com.polduu.exception.ConflictException;
+import com.polduu.config.AppConfig;
 import com.polduu.exception.ExternalAccountRejectedException;
 import com.polduu.exception.GlobalExceptionHandler;
 import com.polduu.exception.InvalidCredentialsException;
 import com.polduu.exception.InvalidRefreshTokenException;
 import com.polduu.security.JwtService;
+import com.polduu.security.RateLimiter;
 import com.polduu.security.SecurityConfig;
 import com.polduu.service.RefreshTokenService;
 import com.polduu.service.AccountLinkingService;
 import com.polduu.service.UserService;
 
 @WebMvcTest(AuthController.class)
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, AppConfig.class, RateLimiter.class})
 class AuthControllerTest {
 
         @Autowired MockMvc mockMvc;
