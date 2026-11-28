@@ -11,7 +11,6 @@ import com.polduu.dto.auth.UserRegisterRequestDto;
 import com.polduu.dto.user.PublicUserResponseDto;
 import com.polduu.dto.user.UserPatchRequestDto;
 import com.polduu.dto.user.UserResponseDto;
-import com.polduu.model.AuthProvider;
 import com.polduu.model.User;
 
 class UserMapperTest {
@@ -28,7 +27,6 @@ class UserMapperTest {
                 .fullName("Pol")
                 .imageUrl("http://old.png")
                 .passwordHash("hashed")
-                .authProvider(AuthProvider.LOCAL)
                 .build();
     }
 
@@ -38,20 +36,19 @@ class UserMapperTest {
     void toEntity_mapsAllFields() {
         var request = new UserRegisterRequestDto("pol", "pol@test.com", "secret123", "Pol");
 
-        User user = mapper.toEntity(request, "hashed", AuthProvider.LOCAL);
+        User user = mapper.toEntity(request, "hashed");
 
         assertThat(user.getUsername()).isEqualTo("pol");
         assertThat(user.getEmail()).isEqualTo("pol@test.com");
         assertThat(user.getFullName()).isEqualTo("Pol");
         assertThat(user.getPasswordHash()).isEqualTo("hashed");
-        assertThat(user.getAuthProvider()).isEqualTo(AuthProvider.LOCAL);
     }
 
     @Test
     void toEntity_doesNotLeakPlainPassword() {
         var request = new UserRegisterRequestDto("pol", "pol@test.com", "secret123", "Pol");
 
-        User user = mapper.toEntity(request, "hashed", AuthProvider.LOCAL);
+        User user = mapper.toEntity(request, "hashed");
 
         assertThat(user.getPasswordHash()).isNotEqualTo("secret123");
     }
@@ -60,7 +57,7 @@ class UserMapperTest {
     void toEntity_leavesGeneratedFieldsEmpty() {
         var request = new UserRegisterRequestDto("pol", "pol@test.com", "secret123", "Pol");
 
-        User user = mapper.toEntity(request, "hashed", AuthProvider.LOCAL);
+        User user = mapper.toEntity(request, "hashed");
 
         assertThat(user.getId()).isNull();
         assertThat(user.getImageUrl()).isNull();
@@ -120,7 +117,6 @@ class UserMapperTest {
         assertThat(user.getId()).isEqualTo(ID);
         assertThat(user.getEmail()).isEqualTo("pol@test.com");
         assertThat(user.getPasswordHash()).isEqualTo("hashed");
-        assertThat(user.getAuthProvider()).isEqualTo(AuthProvider.LOCAL);
         assertThat(user.getUsername()).isEqualTo("pol");
     }
 }

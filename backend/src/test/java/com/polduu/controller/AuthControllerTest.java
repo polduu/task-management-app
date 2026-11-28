@@ -26,6 +26,8 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.polduu.dto.auth.AuthResponseDto;
+import com.polduu.dto.auth.GitHubAuthRequestDto;
+import org.springframework.web.client.RestClientException;
 import com.polduu.dto.auth.GoogleAuthRequestDto;
 import com.polduu.dto.user.UserResponseDto;
 import com.polduu.exception.ConflictException;
@@ -413,6 +415,46 @@ class AuthControllerTest {
                         .andExpect(status().isUnauthorized());
 
                 verify(userService, never()).linkGoogleAccount(any(), any());
+        }
+
+        @Test
+        void linkGitHub_withAuthenticatedUser_returns204() throws Exception {
+                UUID userId = UUID.randomUUID();
+
+                mockMvc.perform(post("/api/auth/github/link")
+                        .with(authentication(new UsernamePasswordAuthenticationToken(userId, null, List.of())))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"code":"gh-code"}
+                        """))
+                        .andExpect(status().isNoContent());
+
+                verify(userService).linkGitHubAccount(userId, new GitHubAuthRequestDto("gh-code"));
+        }
+
+        @Test
+        void linkGitHub_withoutToken_returns401() throws Exception {
+                mockMvc.perform(post("/api/auth/github/link")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"code":"gh-code"}
+                        """))
+                        .andExpect(status().isUnauthorized());
+
+                verify(userService, never()).linkGitHubAccount(any(), any());
+        }
+
+        @Test
+        void githubLogin_whenGitHubIsUnavailable_returns502() throws Exception {
+                when(userService.githubLogin(any())).thenThrow(new RestClientException("boom"));
+
+                mockMvc.perform(post("/api/auth/github")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"code":"gh-code"}
+                        """))
+                        .andExpect(status().isBadGateway())
+                        .andExpect(jsonPath("$.message").value("External service unavailable"));
         }
 
 }

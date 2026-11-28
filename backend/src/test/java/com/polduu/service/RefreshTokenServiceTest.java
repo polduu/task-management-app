@@ -26,7 +26,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.polduu.exception.InvalidRefreshTokenException;
-import com.polduu.model.AuthProvider;
 import com.polduu.model.RefreshToken;
 import com.polduu.model.User;
 import com.polduu.repository.RefreshTokenRepository;
@@ -49,7 +48,7 @@ class RefreshTokenServiceTest {
         service = new RefreshTokenService(refreshTokenRepository, Clock.fixed(NOW, ZoneOffset.UTC),
                 IDLE_TIMEOUT, MAX_SESSION_AGE);
         user = User.builder().id(UUID.randomUUID()).username("pol").email("pol@test.com")
-                .fullName("Pol").authProvider(AuthProvider.LOCAL).build();
+                .fullName("Pol").build();
     }
 
     /*----------------------------------------------------------------------------- */

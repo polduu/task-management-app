@@ -38,8 +38,8 @@ import com.polduu.exception.InvalidCredentialsException;
 import com.polduu.exception.InvalidRefreshTokenException;
 import com.polduu.exception.ResourceNotFoundException;
 import com.polduu.mapper.UserMapper;
-import com.polduu.model.AuthProvider;
 import com.polduu.model.User;
+import com.polduu.repository.UserIdentityRepository;
 import com.polduu.repository.UserRepository;
 import com.polduu.security.JwtService;
 
@@ -48,6 +48,7 @@ import com.polduu.security.JwtService;
 class UserServiceTest {
 
     @Mock UserRepository userRepository;
+    @Mock UserIdentityRepository userIdentityRepository;
     @Mock PasswordEncoder passwordEncoder;
     @Mock JwtService jwtService;
     @Mock RefreshTokenService refreshTokenService;
@@ -91,7 +92,6 @@ class UserServiceTest {
         assertThat(saved.getEmail()).isEqualTo(EMAIL);
         assertThat(saved.getUsername()).isEqualTo(USERNAME);
         assertThat(saved.getFullName()).isEqualTo(FULLNAME);
-        assertThat(saved.getAuthProvider()).isEqualTo(AuthProvider.LOCAL);
         assertThat(saved.getPasswordHash()).isEqualTo(HASH);
 
         assertThat(response.accessToken()).isEqualTo("access");
@@ -175,7 +175,7 @@ class UserServiceTest {
     @Test
     void logInUser_withUnknownEmail_stillChecksPasswordAgainstARealHash() {
         PasswordEncoder realEncoder = spy(new BCryptPasswordEncoder(4));
-        UserService service = new UserService(userRepository, realEncoder, jwtService, refreshTokenService, userMapper, googleIdTokenVerifier);
+        UserService service = new UserService(userRepository, realEncoder, jwtService, refreshTokenService, userMapper, googleIdTokenVerifier, userIdentityRepository);
         when(userRepository.findByEmail("ghost@test.com")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.logInUser(new UserLoginRequestDto("ghost@test.com", PASSWORD)))
@@ -188,10 +188,9 @@ class UserServiceTest {
     @Test
     void logInUser_withUserWithoutPassword_failsAfterCheckingAgainstARealHash() {
         PasswordEncoder realEncoder = spy(new BCryptPasswordEncoder(4));
-        UserService service = new UserService(userRepository, realEncoder, jwtService, refreshTokenService, userMapper, googleIdTokenVerifier);
+        UserService service = new UserService(userRepository, realEncoder, jwtService, refreshTokenService, userMapper, googleIdTokenVerifier, userIdentityRepository);
         User oauthUser = buildUser();
         oauthUser.setPasswordHash(null);
-        oauthUser.setAuthProvider(AuthProvider.GOOGLE);
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(oauthUser));
 
         assertThatThrownBy(() -> service.logInUser(new UserLoginRequestDto(EMAIL, PASSWORD)))
@@ -394,7 +393,6 @@ class UserServiceTest {
                 .email(EMAIL)
                 .fullName(FULLNAME)
                 .passwordHash(HASH)
-                .authProvider(AuthProvider.LOCAL)
                 .build();
     }
 }

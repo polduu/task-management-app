@@ -8,14 +8,11 @@ import org.hibernate.annotations.UuidGenerator;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.persistence.UniqueConstraint;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -23,7 +20,7 @@ import lombok.Getter;
 import lombok.Setter;
  
 @Entity 
-@Table(name = "users", uniqueConstraints = @UniqueConstraint(columnNames = {"auth_provider", "provider_id"}))
+@Table(name = "users")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -55,16 +52,8 @@ public class User {
     @Column (name = "full_name", nullable = false, length = 100)
     private String fullName;
 
-    @Enumerated (EnumType.STRING)
-    @Column (name = "auth_provider", nullable = false)
-    private AuthProvider authProvider;
-
     @CreationTimestamp
     @Column (name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
-
-    @Column (name = "provider_id", length = 255)
-    private String providerId;
-
 
 }

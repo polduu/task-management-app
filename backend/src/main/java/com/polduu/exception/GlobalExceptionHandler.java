@@ -16,6 +16,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
@@ -132,6 +133,14 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<Object> handleUnexpected(Exception ex, WebRequest request) {
         log.error("Unexpected error", ex);
         return error(HttpStatus.INTERNAL_SERVER_ERROR, "Internal server error", request, null);
+    }
+
+    // 502: a call to an external provider failed
+    @ExceptionHandler(RestClientException.class)
+    public ResponseEntity<Object> handleExternalService(
+            RestClientException ex, WebRequest request) {
+        log.error("External service call failed: {}", ex.getClass().getSimpleName());
+        return error(HttpStatus.BAD_GATEWAY, "External service unavailable", request, null);
     }
 
     // ---- Helper ----

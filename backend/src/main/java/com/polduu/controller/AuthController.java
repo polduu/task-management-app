@@ -62,6 +62,14 @@ public class AuthController {
         return userService.githubLogin(githubAuthRequest);
     }
 
+    @PostMapping ("/github/link")
+    @ResponseStatus (code = HttpStatus.NO_CONTENT)
+    public void linkGitHub(@AuthenticationPrincipal UUID userId,
+            @Valid @RequestBody GitHubAuthRequestDto request) {
+        log.info("GitHub link endpoint hit");
+        userService.linkGitHubAccount(userId, request);
+    }
+
     @PostMapping ("/login")
     public AuthResponseDto loginUser(@Valid @RequestBody UserLoginRequestDto userLoginRequestDto) {
         log.info("Login endpoint hit");
