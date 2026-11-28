@@ -41,4 +41,12 @@ public class UserIdentity {
 
     @Column (name = "provider_id", nullable = false, length = 255)
     private String providerId;
+
+    public static UserIdentity of(User user, AuthProvider provider, String providerId) {
+        UserIdentity identity = new UserIdentity();
+        identity.setUser(user);
+        identity.setProvider(provider);
+        identity.setProviderId(providerId);
+        return identity;
+    }
 }

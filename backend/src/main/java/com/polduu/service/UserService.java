@@ -1,24 +1,17 @@
 package com.polduu.service;
 
-import java.io.IOException;
-import java.security.GeneralSecurityException;
 import java.text.Normalizer;
-import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
 
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
-import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.polduu.dto.auth.AuthResponseDto;
 import com.polduu.dto.auth.GitHubAuthRequestDto;
 import com.polduu.dto.auth.GoogleAuthRequestDto;
@@ -38,10 +31,6 @@ import com.polduu.repository.UserIdentityRepository;
 import com.polduu.repository.UserRepository;
 import com.polduu.security.JwtService;
 
-
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestClient;
-
 import lombok.extern.slf4j.Slf4j;
 
 
@@ -56,33 +45,28 @@ public class UserService {
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
     private final UserMapper userMapper;
-
-    private final GoogleIdTokenVerifier googleIdTokenVerifier;
-
-    @Value("${github.client-id}")
-    private String githubClientId;
-    @Value("${github.client-secret}")
-    private String githubClientSecret;
-
-    private final RestClient restClient = RestClient.create();
+    private final GoogleAuthClient googleAuthClient;
+    private final GitHubClient gitHubClient;
+    private final TransactionOperations transactions;
 
     // Checked when the email is unknown or has no password, so every failed login costs one
     // password hash comparison and response times don't reveal which emails are registered
     private final String dummyPasswordHash;
 
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService
-            , RefreshTokenService refreshTokenService, UserMapper userMapper
-            , GoogleIdTokenVerifier googleIdTokenVerifier
-            , UserIdentityRepository userIdentityRepository
-    ) {
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService,
+            RefreshTokenService refreshTokenService, UserMapper userMapper,
+            GoogleAuthClient googleAuthClient, UserIdentityRepository userIdentityRepository,
+            GitHubClient gitHubClient, TransactionOperations transactions) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
         this.userMapper = userMapper;
-        this.googleIdTokenVerifier = googleIdTokenVerifier;
-        this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
+        this.googleAuthClient = googleAuthClient;
         this.userIdentityRepository = userIdentityRepository;
+        this.gitHubClient = gitHubClient;
+        this.transactions = transactions;
+        this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
     public AuthResponseDto createUser(UserRegisterRequestDto user) {
@@ -102,7 +86,7 @@ public class UserService {
     }
 
     public AuthResponseDto googleLogin(GoogleAuthRequestDto googleAuthRequest) {
-        GoogleIdToken.Payload payload = verifyGoogleToken(googleAuthRequest.idToken());
+        GoogleIdToken.Payload payload = googleAuthClient.verify(googleAuthRequest.idToken());
 
         if (payload.getEmail() == null || !Boolean.TRUE.equals(payload.getEmailVerified())) {
             log.warn("Google login rejected: email missing or not verified");
@@ -113,53 +97,11 @@ public class UserService {
         String name = (String) payload.get("name");
         String providerId = payload.getSubject();
 
-
-
-
         User user = userIdentityRepository.findByProviderAndProviderId(AuthProvider.GOOGLE, providerId)
-            .map(UserIdentity::getUser)
-            .orElseGet(() -> {
-                if (userRepository.existsByEmail(email)) {
-                    log.warn("Google login rejected: email belongs to an account not linked to Google");
-                    throw new ConflictException("Email already exists");
-                }
-                User created = new User();
-                created.setUsername(generateUsername(name));
-                created.setEmail(email);
-                String fullName = name == null || name.isBlank() ? "User" : name;
-                created.setFullName(fullName.substring(0, Math.min(fullName.length(), 100)));
-                UserIdentity userIdentity = new UserIdentity();
-                User saved = userRepository.save(created);
-                userIdentity.setUser(created);
-                userIdentity.setProvider(AuthProvider.GOOGLE);
-                userIdentity.setProviderId(providerId);
-                userIdentityRepository.save(userIdentity);
-                return saved;
-            });
+                .map(UserIdentity::getUser)
+                .orElseGet(() -> createSocialUser(email, name, AuthProvider.GOOGLE, providerId));
 
-        RefreshTokenService.Session session = refreshTokenService.startSession(user);
-        String token = jwtService.generateToken(user.getId(), session.id());
-
-        return toAuthResponseDto(user, token, session.refreshToken());
-    }
-
-    // The token is never logged: it is a credential and carries personal data
-    private GoogleIdToken.Payload verifyGoogleToken(String idTokenString) {
-        GoogleIdToken idToken;
-        try {
-            idToken = googleIdTokenVerifier.verify(idTokenString);
-        } catch (IOException | GeneralSecurityException e) {
-            log.error("Could not verify Google ID token", e);
-            throw new InvalidCredentialsException();
-        } catch (RuntimeException e) {
-            log.warn("Malformed Google ID token: {}", e.getClass().getSimpleName());
-            throw new InvalidCredentialsException();
-        }
-        if (idToken == null) {
-            log.warn("Google ID token rejected by the verifier");
-            throw new InvalidCredentialsException();
-        }
-        return idToken.getPayload();
+        return startSessionFor(user);
     }
 
     private String generateUsername(String name) {
@@ -182,105 +124,45 @@ public class UserService {
         }
 
 
+    // No transaction while waiting for GitHub, so a slow response doesn't hold a database connection
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public AuthResponseDto githubLogin(GitHubAuthRequestDto request) {
-        String accessToken = exchangeCodeForAccessToken(request.code());
-        Map<String, Object> githubUser = fetchGithubUser(accessToken);
+        String accessToken = gitHubClient.exchangeCode(request.code());
+        GitHubClient.Profile profile = gitHubClient.fetchProfile(accessToken);
 
-        String providerId = String.valueOf(githubUser.get("id"));
-        String name = githubUser.get("name") != null 
-                ? (String) githubUser.get("name") 
-                : (String) githubUser.get("login");
-
-        String email = fetchPrimaryVerifiedEmail(accessToken);
-
-        final String finalEmail = email.trim().toLowerCase(Locale.ROOT);
-        User user = userIdentityRepository.findByProviderAndProviderId(AuthProvider.GITHUB, providerId)
-            .map(UserIdentity::getUser)
-            .orElseGet(() -> {
-                if (userRepository.existsByEmail(finalEmail)) {
-                    log.warn("GitHub login rejected: email belongs to an account not linked to GitHub");
-                    throw new ConflictException("Email already exists");
-                }
-                User created = new User();
-                created.setUsername(generateUsername(name));
-                created.setEmail(finalEmail);
-                String fullName = name == null || name.isBlank() ? "User" : name;
-                created.setFullName(fullName.substring(0, Math.min(fullName.length(), 100)));
-                User saved = userRepository.save(created);
-                UserIdentity userIdentity = new UserIdentity();
-                userIdentity.setUser(created);
-                userIdentity.setProvider(AuthProvider.GITHUB);
-                userIdentity.setProviderId(providerId);
-                userIdentityRepository.save(userIdentity);
-                return saved;
-            });
-
-        RefreshTokenService.Session session = refreshTokenService.startSession(user);
-        String jwt = jwtService.generateToken(user.getId(), session.id()); 
-        return toAuthResponseDto(user, jwt, session.refreshToken());
-    }
-
-    private String exchangeCodeForAccessToken(String code) {
-        Map<String, String> body = Map.of(
-                "client_id", githubClientId,
-                "client_secret", githubClientSecret,
-                "code", code
-        );
-
-        Map<String, Object> response = restClient.post()
-                .uri("https://github.com/login/oauth/access_token")
-                .header(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(new ParameterizedTypeReference<>() {});
-
-        if (response == null || !response.containsKey("access_token")) {
-            log.warn("GitHub login rejected: could not exchange code for access token");
-            throw new InvalidCredentialsException();
-        }
-        return (String) response.get("access_token");
-    }
-
-    private Map<String, Object> fetchGithubUser(String accessToken) {
-        Map<String, Object> githubUser = restClient.get()
-                .uri("https://api.github.com/user")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
-                .header(HttpHeaders.ACCEPT, "application/vnd.github+json")
-                .retrieve()
-                .body(new ParameterizedTypeReference<>() {});
-
-        if (githubUser == null || githubUser.get("id") == null) {
-            log.warn("GitHub request rejected: could not fetch user profile");
-            throw new InvalidCredentialsException();
-        }
-        return githubUser;
-    }
-
-    private String fetchPrimaryVerifiedEmail(String accessToken) {
-        List<Map<String, Object>> emails = restClient.get()
-                .uri("https://api.github.com/user/emails")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
-                .header(HttpHeaders.ACCEPT, "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .retrieve()
-                .body(new ParameterizedTypeReference<>() {});
-
-        if (emails == null || emails.isEmpty()) {
-            log.warn("GitHub login rejected: could not fetch user emails");
-            throw new InvalidCredentialsException();
-        }
-
-        return emails.stream()
-                .filter(e -> Boolean.TRUE.equals(e.get("primary")) 
-                        && Boolean.TRUE.equals(e.get("verified")) 
-                        && e.get("email") != null)
-                .map(e -> e.get("email").toString())
-                .findFirst()
-                .orElseThrow(() -> {
-                    log.warn("GitHub login rejected: no primary verified email found");
-                    return new InvalidCredentialsException();
+        // The email is only needed to create an account: linked users don't depend on it
+        User user = userIdentityRepository.findByProviderAndProviderId(AuthProvider.GITHUB, profile.id())
+                .map(UserIdentity::getUser)
+                .orElseGet(() -> {
+                    String email = gitHubClient.fetchPrimaryVerifiedEmail(accessToken)
+                            .trim().toLowerCase(Locale.ROOT);
+                    return transactions.execute(status ->
+                            createSocialUser(email, profile.name(), AuthProvider.GITHUB, profile.id()));
                 });
+
+        return startSessionFor(user);
+    }
+
+    // An existing account with the same email is never taken over: it has to link the provider itself
+    private User createSocialUser(String email, String name, AuthProvider provider, String providerId) {
+        if (userRepository.existsByEmail(email)) {
+            log.warn("{} login rejected: email belongs to an account not linked to it", provider);
+            throw new ConflictException("Email already exists");
+        }
+        User created = new User();
+        created.setUsername(generateUsername(name));
+        created.setEmail(email);
+        String fullName = name == null || name.isBlank() ? "User" : name;
+        created.setFullName(fullName.substring(0, Math.min(fullName.length(), 100)));
+        User saved = userRepository.save(created);
+        userIdentityRepository.save(UserIdentity.of(saved, provider, providerId));
+        return saved;
+    }
+
+    private AuthResponseDto startSessionFor(User user) {
+        RefreshTokenService.Session session = refreshTokenService.startSession(user);
+        String token = jwtService.generateToken(user.getId(), session.id());
+        return toAuthResponseDto(user, token, session.refreshToken());
     }
 
     @Transactional(readOnly = true)
@@ -369,66 +251,4 @@ public class UserService {
     public void logoutAllSessions(UUID userId) {
         refreshTokenService.endAllSessions(userId);
     }
-
-    public void linkGoogleAccount(UUID userId, GoogleAuthRequestDto request) {
-
-        GoogleIdToken.Payload payload = verifyGoogleToken(request.idToken());
-
-        if (!Boolean.TRUE.equals(payload.getEmailVerified())) {
-            log.warn("Google link rejected for user {}: email not verified", userId);
-            throw new InvalidCredentialsException();
-        }
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        boolean linkedElsewhere = userIdentityRepository.findByProviderAndProviderId(AuthProvider.GOOGLE, payload.getSubject())
-                .filter(other -> !other.getUser().getId().equals(userId))
-                .isPresent();
-        if (linkedElsewhere) {
-            log.warn("Google link rejected for user {}: Google account linked to another user", userId);
-            throw new ConflictException("Google account already linked");
-        }
-        if (userIdentityRepository.existsByUserIdAndProvider(userId, AuthProvider.GOOGLE)) {
-            log.warn("Google link rejected for user {}: already linked", userId);
-            throw new ConflictException("Google account already linked");
-        }
-        UserIdentity userIdentity = new UserIdentity();
-        userIdentity.setUser(user);
-        userIdentity.setProvider(AuthProvider.GOOGLE);
-        userIdentity.setProviderId(payload.getSubject());
-        userIdentityRepository.save(userIdentity);
-        log.info("Google account linked to user {}", userId);
-    }
-
-    public void linkGitHubAccount(UUID userId, GitHubAuthRequestDto request) {
-        String accessToken = exchangeCodeForAccessToken(request.code());
-        Map<String, Object> githubUser = fetchGithubUser(accessToken);
-        String providerId = String.valueOf(githubUser.get("id"));
-
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
-        boolean linkedElsewhere = userIdentityRepository.findByProviderAndProviderId(AuthProvider.GITHUB, providerId)
-                .filter(other -> !other.getUser().getId().equals(userId))
-                .isPresent();
-        if (linkedElsewhere) {
-            log.warn("GitHub link rejected for user {}: GitHub account linked to another user", userId);
-            throw new ConflictException("GitHub account already linked");
-        }
-        if (userIdentityRepository.existsByUserIdAndProvider(userId, AuthProvider.GITHUB)) {
-            log.warn("GitHub link rejected for user {}: already linked", userId);
-            throw new ConflictException("GitHub account already linked");
-        }
-        UserIdentity userIdentity = new UserIdentity();
-        userIdentity.setUser(user);
-        userIdentity.setProvider(AuthProvider.GITHUB);
-        userIdentity.setProviderId(providerId);
-        userIdentityRepository.save(userIdentity);
-        log.info("GitHub account linked to user {}", userId);
-    }
-
-
-    
-
-
-
 }

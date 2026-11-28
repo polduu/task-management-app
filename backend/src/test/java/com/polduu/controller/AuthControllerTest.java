@@ -1,5 +1,13 @@
 package com.polduu.controller;
 
+import com.polduu.dto.auth.LinkGitHubRequestDto;
+import com.polduu.dto.auth.LinkGoogleRequestDto;
+import com.polduu.dto.auth.LinkedAccountsResponseDto;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import com.polduu.exception.ReauthenticationRequiredException;
+import com.polduu.model.AuthProvider;
+import java.util.Locale;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.never;
@@ -26,17 +34,17 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.polduu.dto.auth.AuthResponseDto;
-import com.polduu.dto.auth.GitHubAuthRequestDto;
 import org.springframework.web.client.RestClientException;
-import com.polduu.dto.auth.GoogleAuthRequestDto;
 import com.polduu.dto.user.UserResponseDto;
 import com.polduu.exception.ConflictException;
+import com.polduu.exception.ExternalAccountRejectedException;
 import com.polduu.exception.GlobalExceptionHandler;
 import com.polduu.exception.InvalidCredentialsException;
 import com.polduu.exception.InvalidRefreshTokenException;
 import com.polduu.security.JwtService;
 import com.polduu.security.SecurityConfig;
 import com.polduu.service.RefreshTokenService;
+import com.polduu.service.AccountLinkingService;
 import com.polduu.service.UserService;
 
 @WebMvcTest(AuthController.class)
@@ -46,6 +54,7 @@ class AuthControllerTest {
         @Autowired MockMvc mockMvc;
 
         @MockitoBean UserService userService;
+        @MockitoBean AccountLinkingService accountLinkingService;
         @MockitoBean JwtService jwtService; // lo necesita JwtAuthenticationFilter
         @MockitoBean RefreshTokenService refreshTokenService; // idem
 
@@ -393,16 +402,17 @@ class AuthControllerTest {
         @Test
         void linkGoogle_withToken_linksThatUser() throws Exception {
                 UUID userId = UUID.randomUUID();
+                UUID sessionId = UUID.randomUUID();
 
                 mockMvc.perform(post("/api/auth/google/link")
-                        .with(authentication(new UsernamePasswordAuthenticationToken(userId, null, List.of())))
+                        .with(authentication(session(userId, sessionId)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                         {"idToken":"id-token"}
                         """))
                         .andExpect(status().isNoContent());
 
-                verify(userService).linkGoogleAccount(userId, new GoogleAuthRequestDto("id-token"));
+                verify(accountLinkingService).linkGoogleAccount(userId, sessionId, new LinkGoogleRequestDto("id-token", null));
         }
 
         @Test
@@ -414,22 +424,23 @@ class AuthControllerTest {
                         """))
                         .andExpect(status().isUnauthorized());
 
-                verify(userService, never()).linkGoogleAccount(any(), any());
+                verify(accountLinkingService, never()).linkGoogleAccount(any(), any(), any());
         }
 
         @Test
         void linkGitHub_withAuthenticatedUser_returns204() throws Exception {
                 UUID userId = UUID.randomUUID();
+                UUID sessionId = UUID.randomUUID();
 
                 mockMvc.perform(post("/api/auth/github/link")
-                        .with(authentication(new UsernamePasswordAuthenticationToken(userId, null, List.of())))
+                        .with(authentication(session(userId, sessionId)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                         {"code":"gh-code"}
                         """))
                         .andExpect(status().isNoContent());
 
-                verify(userService).linkGitHubAccount(userId, new GitHubAuthRequestDto("gh-code"));
+                verify(accountLinkingService).linkGitHubAccount(userId, sessionId, new LinkGitHubRequestDto("gh-code", null));
         }
 
         @Test
@@ -441,7 +452,7 @@ class AuthControllerTest {
                         """))
                         .andExpect(status().isUnauthorized());
 
-                verify(userService, never()).linkGitHubAccount(any(), any());
+                verify(accountLinkingService, never()).linkGitHubAccount(any(), any(), any());
         }
 
         @Test
@@ -457,4 +468,87 @@ class AuthControllerTest {
                         .andExpect(jsonPath("$.message").value("External service unavailable"));
         }
 
+        @ParameterizedTest
+        @ValueSource(strings = {"google", "github"})
+        void unlink_withAuthenticatedUser_returns204(String provider) throws Exception {
+                UUID userId = UUID.randomUUID();
+                UUID sessionId = UUID.randomUUID();
+
+                mockMvc.perform(post("/api/auth/" + provider + "/unlink")
+                        .with(authentication(session(userId, sessionId)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"password":"secret"}
+                        """))
+                        .andExpect(status().isNoContent());
+
+                verify(accountLinkingService).unlinkAccount(userId, sessionId,
+                        AuthProvider.valueOf(provider.toUpperCase(Locale.ROOT)), "secret");
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"google", "github"})
+        void unlink_withoutToken_returns401(String provider) throws Exception {
+                mockMvc.perform(post("/api/auth/" + provider + "/unlink")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                        .andExpect(status().isUnauthorized());
+
+                verify(accountLinkingService, never()).unlinkAccount(any(), any(), any(), any());
+        }
+
+        @Test
+        void unlink_withoutReauthentication_returns403() throws Exception {
+                doThrow(new ReauthenticationRequiredException("Password confirmation required"))
+                        .when(accountLinkingService).unlinkAccount(any(), any(), any(), any());
+
+                mockMvc.perform(post("/api/auth/github/unlink")
+                        .with(authentication(session(UUID.randomUUID(), UUID.randomUUID())))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                        .andExpect(status().isForbidden())
+                        .andExpect(jsonPath("$.message").value("Password confirmation required"));
+        }
+
+        @Test
+        void identities_withAuthenticatedUser_returnsTheirLinkedAccounts() throws Exception {
+                UUID userId = UUID.randomUUID();
+                when(accountLinkingService.getLinkedAccounts(userId))
+                        .thenReturn(new LinkedAccountsResponseDto(List.of(AuthProvider.GITHUB), true));
+
+                mockMvc.perform(get("/api/auth/identities")
+                        .with(authentication(session(userId, UUID.randomUUID()))))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.providers[0]").value("GITHUB"))
+                        .andExpect(jsonPath("$.hasPassword").value(true));
+        }
+
+        @Test
+        void identities_withoutToken_returns401() throws Exception {
+                mockMvc.perform(get("/api/auth/identities"))
+                        .andExpect(status().isUnauthorized());
+
+                verify(accountLinkingService, never()).getLinkedAccounts(any());
+        }
+
+        @Test
+        void linkGitHub_withRejectedCode_returns400() throws Exception {
+                doThrow(new ExternalAccountRejectedException())
+                        .when(accountLinkingService).linkGitHubAccount(any(), any(), any());
+
+                mockMvc.perform(post("/api/auth/github/link")
+                        .with(authentication(session(UUID.randomUUID(), UUID.randomUUID())))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"code":"gh-code"}
+                        """))
+                        .andExpect(status().isBadRequest());
+        }
+
+        private static UsernamePasswordAuthenticationToken session(UUID userId, UUID sessionId) {
+                UsernamePasswordAuthenticationToken token =
+                        new UsernamePasswordAuthenticationToken(userId, null, List.of());
+                token.setDetails(sessionId);
+                return token;
+        }
 }

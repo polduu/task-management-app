@@ -24,7 +24,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 
 import com.polduu.dto.auth.AuthResponseDto;
 import com.polduu.dto.auth.RefreshTokenRequestDto;
@@ -52,7 +51,6 @@ class UserServiceTest {
     @Mock PasswordEncoder passwordEncoder;
     @Mock JwtService jwtService;
     @Mock RefreshTokenService refreshTokenService;
-    @Mock GoogleIdTokenVerifier googleIdTokenVerifier;
     @Spy
     private UserMapper userMapper = Mappers.getMapper(UserMapper.class);
 
@@ -175,7 +173,7 @@ class UserServiceTest {
     @Test
     void logInUser_withUnknownEmail_stillChecksPasswordAgainstARealHash() {
         PasswordEncoder realEncoder = spy(new BCryptPasswordEncoder(4));
-        UserService service = new UserService(userRepository, realEncoder, jwtService, refreshTokenService, userMapper, googleIdTokenVerifier, userIdentityRepository);
+        UserService service = new UserService(userRepository, realEncoder, jwtService, refreshTokenService, userMapper, null, userIdentityRepository, null, null);
         when(userRepository.findByEmail("ghost@test.com")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.logInUser(new UserLoginRequestDto("ghost@test.com", PASSWORD)))
@@ -188,7 +186,7 @@ class UserServiceTest {
     @Test
     void logInUser_withUserWithoutPassword_failsAfterCheckingAgainstARealHash() {
         PasswordEncoder realEncoder = spy(new BCryptPasswordEncoder(4));
-        UserService service = new UserService(userRepository, realEncoder, jwtService, refreshTokenService, userMapper, googleIdTokenVerifier, userIdentityRepository);
+        UserService service = new UserService(userRepository, realEncoder, jwtService, refreshTokenService, userMapper, null, userIdentityRepository, null, null);
         User oauthUser = buildUser();
         oauthUser.setPasswordHash(null);
         when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(oauthUser));

@@ -17,6 +17,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
@@ -85,6 +86,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     // ---- Application exceptions (unknown to the parent class) ----
 
+    // 400, not 401: the session is fine, what failed is the Google token or GitHub code being linked
+    @ExceptionHandler(ExternalAccountRejectedException.class)
+    public ResponseEntity<Object> handleExternalAccountRejected(
+            ExternalAccountRejectedException ex, WebRequest request) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), request, null);
+    }
+
     // 401: wrong email or password
     @ExceptionHandler(InvalidCredentialsException.class)
     public ResponseEntity<Object> handleInvalidCredentials(
@@ -97,6 +105,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<Object> handleInvalidRefresh(
             InvalidRefreshTokenException ex, WebRequest request) {
         return error(HttpStatus.UNAUTHORIZED, ex.getMessage(), request, null);
+    }
+
+    // 403, not 401: the access token is valid, so the client must not try to refresh it
+    @ExceptionHandler(ReauthenticationRequiredException.class)
+    public ResponseEntity<Object> handleReauthenticationRequired(
+            ReauthenticationRequiredException ex, WebRequest request) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), request, null);
     }
 
     // 403: authenticated user without permission (e.g. @PreAuthorize)
@@ -139,7 +154,10 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(RestClientException.class)
     public ResponseEntity<Object> handleExternalService(
             RestClientException ex, WebRequest request) {
-        log.error("External service call failed: {}", ex.getClass().getSimpleName());
+        String status = ex instanceof RestClientResponseException response
+                ? String.valueOf(response.getStatusCode().value())
+                : "none";
+        log.error("External service call failed: {} (status {})", ex.getClass().getSimpleName(), status);
         return error(HttpStatus.BAD_GATEWAY, "External service unavailable", request, null);
     }
 

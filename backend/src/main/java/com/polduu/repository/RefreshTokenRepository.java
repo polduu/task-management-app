@@ -16,6 +16,9 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
 
     Optional<RefreshToken> findByTokenHash(String tokenHash);
 
+    // Any token of a session: they all share its absolute expiry
+    Optional<RefreshToken> findFirstByFamilyId(UUID familyId);
+
     // Revoking a session revokes all its rows, and purged rows no longer exist: either way it is not active
     boolean existsByFamilyIdAndRevokedAtIsNull(UUID familyId);
 

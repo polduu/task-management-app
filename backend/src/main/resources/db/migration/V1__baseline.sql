@@ -28,6 +28,7 @@ CREATE TABLE refresh_tokens (
     created_at        timestamp(6) with time zone NOT NULL,
     expires_at        timestamp(6) with time zone NOT NULL,
     family_expires_at timestamp(6) with time zone NOT NULL,
+    session_started_at timestamp(6) with time zone NOT NULL,
     family_id         uuid                        NOT NULL,
     revoked_at        timestamp(6) with time zone,
     token_hash        varchar(64)                 NOT NULL,

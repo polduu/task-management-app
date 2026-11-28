@@ -10,6 +10,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import java.util.Optional;
@@ -18,27 +19,32 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.web.client.ResponseActions;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
-import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.polduu.dto.auth.AuthResponseDto;
 import com.polduu.dto.auth.GitHubAuthRequestDto;
+import com.polduu.dto.auth.LinkGitHubRequestDto;
 import com.polduu.exception.ConflictException;
+import com.polduu.exception.ExternalAccountRejectedException;
 import com.polduu.exception.InvalidCredentialsException;
+import com.polduu.exception.ReauthenticationRequiredException;
 import com.polduu.mapper.UserMapper;
 import com.polduu.model.AuthProvider;
 import com.polduu.model.User;
@@ -66,15 +72,17 @@ class GitHubAuthServiceTest {
     @Mock PasswordEncoder passwordEncoder;
     @Mock JwtService jwtService;
     @Mock RefreshTokenService refreshTokenService;
-    @Mock GoogleIdTokenVerifier googleIdTokenVerifier;
     @Spy
     private UserMapper userMapper = Mappers.getMapper(UserMapper.class);
 
-    @InjectMocks UserService userService;
+    private UserService userService;
+    private AccountLinkingService accountLinkingService;
 
     private final UUID userId = UUID.randomUUID();
     private final UUID sessionId = UUID.randomUUID();
     private final GitHubAuthRequestDto request = new GitHubAuthRequestDto("code");
+
+    private final LinkGitHubRequestDto linkRequest = new LinkGitHubRequestDto("code", "secret");
 
     private MockRestServiceServer github;
 
@@ -82,9 +90,11 @@ class GitHubAuthServiceTest {
     void setUp() {
         RestClient.Builder builder = RestClient.builder();
         github = MockRestServiceServer.bindTo(builder).build();
-        ReflectionTestUtils.setField(userService, "restClient", builder.build());
-        ReflectionTestUtils.setField(userService, "githubClientId", "client-id");
-        ReflectionTestUtils.setField(userService, "githubClientSecret", "client-secret");
+        GitHubClient client = new GitHubClient(builder.build(), "client-id", "client-secret");
+        userService = new UserService(userRepository, passwordEncoder, jwtService, refreshTokenService, userMapper,
+                null, userIdentityRepository, client, TransactionOperations.withoutTransaction());
+        accountLinkingService = new AccountLinkingService(userRepository, userIdentityRepository, passwordEncoder,
+                refreshTokenService, null, client, TransactionOperations.withoutTransaction());
     }
 
     // Login and sign up
@@ -121,7 +131,6 @@ class GitHubAuthServiceTest {
     void githubLogin_withExistingIdentity_logsInWithoutCreatingAnother() {
         givenAccessToken();
         givenProfile();
-        givenEmails(VERIFIED_EMAILS);
         givenGitHubAccountOf(user(userId));
         givenSession();
 
@@ -130,6 +139,7 @@ class GitHubAuthServiceTest {
         assertThat(response.user().id()).isEqualTo(userId);
         verify(userRepository, never()).save(any());
         verify(userIdentityRepository, never()).save(any());
+        github.verify();
     }
 
     @Test
@@ -182,13 +192,13 @@ class GitHubAuthServiceTest {
 
     @Test
     void linkGitHubAccount_addsIdentityWithoutRequiringTheSameEmail() {
-        User local = user(userId);
+        User local = userWithPassword();
         givenAccessToken();
         givenProfile();
         when(userRepository.findById(userId)).thenReturn(Optional.of(local));
         givenNoGitHubAccount();
 
-        userService.linkGitHubAccount(userId, request);
+        accountLinkingService.linkGitHubAccount(userId, sessionId, linkRequest);
 
         UserIdentity identity = savedIdentity();
         assertThat(identity.getUser()).isSameAs(local);
@@ -201,10 +211,11 @@ class GitHubAuthServiceTest {
     void linkGitHubAccount_whenLinkedToAnotherUser_throwsConflict() {
         givenAccessToken();
         givenProfile();
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user(userId)));
+        User local = userWithPassword();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(local));
         givenGitHubAccountOf(user(UUID.randomUUID()));
 
-        assertThatThrownBy(() -> userService.linkGitHubAccount(userId, request))
+        assertThatThrownBy(() -> accountLinkingService.linkGitHubAccount(userId, sessionId, linkRequest))
                 .isInstanceOf(ConflictException.class);
 
         verify(userIdentityRepository, never()).save(any());
@@ -214,14 +225,75 @@ class GitHubAuthServiceTest {
     void linkGitHubAccount_whenUserAlreadyHasGitHub_throwsConflict() {
         givenAccessToken();
         givenProfile();
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user(userId)));
+        User local = userWithPassword();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(local));
         givenNoGitHubAccount();
         when(userIdentityRepository.existsByUserIdAndProvider(userId, AuthProvider.GITHUB)).thenReturn(true);
 
-        assertThatThrownBy(() -> userService.linkGitHubAccount(userId, request))
+        assertThatThrownBy(() -> accountLinkingService.linkGitHubAccount(userId, sessionId, linkRequest))
                 .isInstanceOf(ConflictException.class);
 
         verify(userIdentityRepository, never()).save(any());
+    }
+
+    @Test
+    void linkGitHubAccount_withWrongPassword_neverCallsGitHub() {
+        User local = user(userId);
+        local.setPasswordHash("hash");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(local));
+
+        assertThatThrownBy(() -> accountLinkingService.linkGitHubAccount(userId, sessionId, linkRequest))
+                .isInstanceOf(ReauthenticationRequiredException.class);
+
+        github.verify();
+        verify(userIdentityRepository, never()).save(any());
+    }
+
+    @Test
+    void linkGitHubAccount_withRejectedCode_isNotReportedAsAnExpiredSession() {
+        User local = userWithPassword();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(local));
+        expect(HttpMethod.POST, TOKEN_URL).andRespond(withSuccess(
+                "{\"error\":\"bad_verification_code\"}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> accountLinkingService.linkGitHubAccount(userId, sessionId, linkRequest))
+                .isInstanceOf(ExternalAccountRejectedException.class);
+
+        verify(userIdentityRepository, never()).save(any());
+    }
+
+    // GitHub errors
+
+    @Test
+    void githubLogin_whenHitBySecondaryRateLimit_propagatesRestClientException() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.add(HttpHeaders.RETRY_AFTER, "60");
+        givenAccessToken();
+        expect(HttpMethod.GET, USER_URL).andRespond(withStatus(HttpStatus.FORBIDDEN).headers(headers));
+
+        assertThatThrownBy(() -> userService.githubLogin(request))
+                .isInstanceOf(RestClientException.class);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {401, 403, 404})
+    void githubLogin_whenGitHubRefusesTheToken_throwsInvalidCredentials(int status) {
+        givenAccessToken();
+        expect(HttpMethod.GET, USER_URL).andRespond(withStatus(HttpStatusCode.valueOf(status)));
+
+        assertThatThrownBy(() -> userService.githubLogin(request))
+                .isInstanceOf(InvalidCredentialsException.class);
+    }
+
+    @Test
+    void githubLogin_whenRateLimited_propagatesRestClientException() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.add("X-RateLimit-Remaining", "0");
+        givenAccessToken();
+        expect(HttpMethod.GET, USER_URL).andRespond(withStatus(HttpStatus.FORBIDDEN).headers(headers));
+
+        assertThatThrownBy(() -> userService.githubLogin(request))
+                .isInstanceOf(RestClientException.class);
     }
 
     // Helpers
@@ -269,6 +341,13 @@ class GitHubAuthServiceTest {
         ArgumentCaptor<UserIdentity> captor = ArgumentCaptor.forClass(UserIdentity.class);
         verify(userIdentityRepository).save(captor.capture());
         return captor.getValue();
+    }
+
+    private User userWithPassword() {
+        User user = user(userId);
+        user.setPasswordHash("hash");
+        when(passwordEncoder.matches("secret", "hash")).thenReturn(true);
+        return user;
     }
 
     private static User user(UUID id) {

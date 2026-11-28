@@ -54,6 +54,10 @@ public class RefreshToken {
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
 
+    // When the user signed in; refreshing keeps it
+    @Column(name = "session_started_at", nullable = false)
+    private Instant sessionStartedAt;
+
     // Absolute end of the session, regardless of refreshes
     @Column(name = "family_expires_at", nullable = false)
     private Instant familyExpiresAt;
